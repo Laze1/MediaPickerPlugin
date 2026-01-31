@@ -14,7 +14,6 @@ class MyApp extends StatefulWidget {
 }
 
 class _MyAppState extends State<MyApp> {
-  final _tbchatMediaPickerPlugin = TbchatMediaPicker();
   List<Map<String, dynamic>> _selectedMedia = [];
   bool _isLoading = false;
 
@@ -27,7 +26,7 @@ class _MyAppState extends State<MyApp> {
     });
 
     try {
-      final results = await _tbchatMediaPickerPlugin.pickMedia(
+      final results = await TbchatMediaPicker.pickMedia(
         mimeType: mimeType,
         maxSelectNum: maxSelectNum,
       );

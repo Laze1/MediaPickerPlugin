@@ -1,12 +1,7 @@
 
 import 'tbchat_media_picker_platform_interface.dart';
 
-class TbchatMediaPicker {
-  Future<String?> getPlatformVersion() {
-    return TbchatMediaPickerPlatform.instance.getPlatformVersion();
-  }
-
-  /// 选择媒体文件（图片和视频）
+class TbchatMediaPicker {  /// 选择媒体文件（图片和视频）
   /// 
   /// [mimeType] 媒体类型：0-全部（图片和视频，默认），1-仅图片，2-仅视频
   /// [maxSelectNum] 最大选择数量，默认为1
@@ -27,7 +22,7 @@ class TbchatMediaPicker {
   /// - isCut: 是否已裁剪
   /// - cutPath: 裁剪后的路径
   /// - compressPath: 压缩后的路径
-  Future<List<Map<String, dynamic>>> pickMedia({
+  static Future<List<Map<String, dynamic>>> pickMedia({
     int mimeType = 0, // 默认全部（图片和视频）
     int maxSelectNum = 1,
     int maxSize = 0
