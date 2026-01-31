@@ -26,4 +26,11 @@ abstract class TbchatMediaPickerPlatform extends PlatformInterface {
   Future<String?> getPlatformVersion() {
     throw UnimplementedError('platformVersion() has not been implemented.');
   }
+
+  Future<List<Map<String, dynamic>>> pickMedia({
+    int mimeType = 0, // 0: all (image and video), 1: image, 2: video
+    int maxSelectNum = 1,
+  }) {
+    throw UnimplementedError('pickMedia() has not been implemented.');
+  }
 }

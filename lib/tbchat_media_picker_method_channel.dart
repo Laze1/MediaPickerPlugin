@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
@@ -13,5 +15,33 @@ class MethodChannelTbchatMediaPicker extends TbchatMediaPickerPlatform {
   Future<String?> getPlatformVersion() async {
     final version = await methodChannel.invokeMethod<String>('getPlatformVersion');
     return version;
+  }
+
+  @override
+  Future<List<Map<String, dynamic>>> pickMedia({
+    int mimeType = 0,
+    int maxSelectNum = 1,
+  }) async {
+    final result = await methodChannel.invokeMethod<String>(
+      'pickMedia',
+      {
+        'mimeType': mimeType,
+        'maxSelectNum': maxSelectNum,
+      },
+    );
+    
+    if (result == null) {
+      return [];
+    }
+    
+    try {
+      final jsonList = (jsonDecode(result) as List)
+          .cast<Map<dynamic, dynamic>>()
+          .map((map) => Map<String, dynamic>.from(map))
+          .toList();
+      return jsonList;
+    } catch (e) {
+      return [];
+    }
   }
 }
