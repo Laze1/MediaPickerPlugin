@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:tbchat_media_picker/tbchat_media_picker.dart';
@@ -14,7 +16,7 @@ class MyApp extends StatefulWidget {
 }
 
 class _MyAppState extends State<MyApp> {
-  List<Map<String, dynamic>> _selectedMedia = [];
+  List<MediaEntity> _selectedMedia = [];
   bool _isLoading = false;
 
   Future<void> _pickMedia({
@@ -79,6 +81,19 @@ class _MyAppState extends State<MyApp> {
       return '${minutes}分${remainingSeconds}秒';
     }
     return '${remainingSeconds}秒';
+  }
+
+  /// 获取文件大小（异步）
+  Future<int> _getFileSize(String filePath) async {
+    try {
+      final file = File(filePath);
+      if (await file.exists()) {
+        return await file.length();
+      }
+    } catch (e) {
+      debugPrint('获取文件大小失败: $e');
+    }
+    return 0;
   }
 
   @override
@@ -165,10 +180,6 @@ class _MyAppState extends State<MyApp> {
                       ..._selectedMedia.asMap().entries.map((entry) {
                         final index = entry.key;
                         final media = entry.value;
-                        final isImage = (media['mimeType'] as String? ?? '')
-                            .startsWith('image/');
-                        final isVideo = (media['mimeType'] as String? ?? '')
-                            .startsWith('video/');
 
                         return Card(
                           margin: const EdgeInsets.only(bottom: 12),
@@ -180,9 +191,9 @@ class _MyAppState extends State<MyApp> {
                                 Row(
                                   children: [
                                     Icon(
-                                      isImage
+                                      media.isImage
                                           ? Icons.image
-                                          : isVideo
+                                          : media.isVideo
                                               ? Icons.videocam
                                               : Icons.insert_drive_file,
                                       color: Theme.of(context).primaryColor,
@@ -200,25 +211,91 @@ class _MyAppState extends State<MyApp> {
                                   ],
                                 ),
                                 const SizedBox(height: 8),
-                                _buildInfoRow('文件名', media['fileName'] ?? '未知'),
-                                _buildInfoRow('路径', media['path'] ?? ''),
-                                if (media['width'] != null && media['height'] != null)
-                                  _buildInfoRow(
-                                    '尺寸',
-                                    '${media['width']} × ${media['height']}',
+                                // 基本信息
+                                if (media.id > 0)
+                                  _buildInfoRow('ID', media.id.toString()),
+                                if (media.fileName.isNotEmpty)
+                                  _buildInfoRow('文件名', media.fileName),
+                                if (media.mimeType.isNotEmpty)
+                                  _buildInfoRow('MIME类型', media.mimeType),
+                                if (media.size > 0)
+                                  _buildInfoRow('文件大小', _formatFileSize(media.size)),
+                                if (media.duration > 0)
+                                  _buildInfoRow('时长', _formatDuration(media.duration)),
+                                
+                                // 尺寸信息
+                                if (media.width > 0 && media.height > 0)
+                                  _buildInfoRow('尺寸', '${media.width} × ${media.height}'),
+                                if (media.cropImageWidth > 0 && media.cropImageHeight > 0)
+                                  _buildInfoRow('裁剪尺寸', '${media.cropImageWidth} × ${media.cropImageHeight}'),
+                                if (media.cropOffsetX != 0 || media.cropOffsetY != 0)
+                                  _buildInfoRow('裁剪偏移', 'X: ${media.cropOffsetX}, Y: ${media.cropOffsetY}'),
+                                if (media.cropResultAspectRatio > 0)
+                                  _buildInfoRow('裁剪宽高比', media.cropResultAspectRatio.toStringAsFixed(2)),
+                                
+                                // 路径信息
+                                if (media.path.isNotEmpty)
+                                  _buildInfoRow('路径', media.path),
+                                if (media.realPath.isNotEmpty && media.realPath != media.path)
+                                  _buildInfoRow('真实路径', media.realPath),
+                                if (media.originalPath.isNotEmpty && media.originalPath != media.path)
+                                  _buildInfoRow('原始路径', media.originalPath),
+                                if (media.cutPath.isNotEmpty)
+                                  _buildInfoRow('裁剪路径', media.cutPath),
+                                if (media.compressPath.isNotEmpty) ...[
+                                  _buildInfoRow('压缩路径', media.compressPath),
+                                  FutureBuilder<int>(
+                                    future: _getFileSize(media.compressPath),
+                                    builder: (context, snapshot) {
+                                      if (snapshot.connectionState == ConnectionState.waiting) {
+                                        return _buildInfoRow('压缩后大小', '加载中...');
+                                      } else if (snapshot.hasData && snapshot.data! > 0) {
+                                        return _buildInfoRow('压缩后大小', _formatFileSize(snapshot.data!));
+                                      } else {
+                                        return const SizedBox.shrink();
+                                      }
+                                    },
                                   ),
-                                if (media['duration'] != null && media['duration'] > 0)
-                                  _buildInfoRow(
-                                    '时长',
-                                    _formatDuration(media['duration'] as int),
-                                  ),
-                                if (media['size'] != null)
-                                  _buildInfoRow(
-                                    '大小',
-                                    _formatFileSize(media['size'] as int),
-                                  ),
-                                _buildInfoRow('MIME类型', media['mimeType'] ?? ''),
-                              ],
+                                ],
+                                if (media.watermarkPath.isNotEmpty)
+                                  _buildInfoRow('水印路径', media.watermarkPath),
+                                if (media.videoThumbnailPath.isNotEmpty)
+                                  _buildInfoRow('视频缩略图', media.videoThumbnailPath),
+                                if (media.sandboxPath.isNotEmpty)
+                                  _buildInfoRow('沙箱路径', media.sandboxPath),
+                                
+                                // 相册信息
+                                if (media.bucketId > 0)
+                                  _buildInfoRow('相册ID', media.bucketId.toString()),
+                                if (media.parentFolderName.isNotEmpty)
+                                  _buildInfoRow('父文件夹', media.parentFolderName),
+                                
+                                // 状态信息
+                                _buildInfoRow('已选中', media.isChecked ? '是' : '否'),
+                                _buildInfoRow('已裁剪', media.isCut ? '是' : '否'),
+                                _buildInfoRow('已压缩', media.compressed ? '是' : '否'),
+                                _buildInfoRow('原图', media.isOriginal ? '是' : '否'),
+                                _buildInfoRow('来源', '${media.isCameraSource ? '相机' : '相册'}'),
+                                _buildInfoRow('已编辑', media.isEditorImage ? '是' : '否'),
+                                
+
+                                
+                                // 其他信息
+                                if (media.position > 0)
+                                  _buildInfoRow('位置', media.position.toString()),
+                                if (media.number > 0)
+                                  _buildInfoRow('编号', media.number.toString()),
+                                if (media.chooseModel > 0)
+                                  _buildInfoRow('选择模式', media.chooseModel.toString()),
+                                if (media.dateAddedTime > 0)
+                                  _buildInfoRow('添加时间', DateTime.fromMillisecondsSinceEpoch(media.dateAddedTime).toString()),
+                                if (media.customData.isNotEmpty)
+                                  _buildInfoRow('自定义数据', media.customData),
+                                if (media.isMaxSelectEnabledMask)
+                                  _buildInfoRow('最大选择遮罩', '启用'),
+                                if (media.isGalleryEnabledMask)
+                                  _buildInfoRow('相册遮罩', '启用'),
+                                ],
                             ),
                           ),
                         );

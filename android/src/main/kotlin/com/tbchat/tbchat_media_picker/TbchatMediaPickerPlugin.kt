@@ -20,6 +20,9 @@ import io.flutter.plugin.common.MethodChannel.MethodCallHandler
 import io.flutter.plugin.common.MethodChannel.Result
 import org.json.JSONArray
 import org.json.JSONObject
+import top.zibin.luban.Luban
+import top.zibin.luban.OnNewCompressListener
+import java.io.File
 import java.util.ArrayList
 
 /** TbchatMediaPickerPlugin */
@@ -82,8 +85,22 @@ class TbchatMediaPickerPlugin :
                     .isOriginalControl(true) //原图选项
                     .isDisplayCamera(false) //不显示相机
                     .setSelectMaxFileSize(maxSize)
-                    .setCompressEngine(CompressFileEngine { context, source, call ->
-
+                    .setCompressEngine(CompressFileEngine { context, source, compressCallback ->
+                        Luban.with(context)
+                            .load(source)
+                            .setTargetDir(context.cacheDir.path)
+                            .setCompressListener(object : OnNewCompressListener {
+                                override fun onStart() {}
+                                override fun onSuccess(
+                                    source: String?,
+                                    compressFile: File?
+                                ) {
+                                    compressCallback?.onCallback(source,compressFile?.absolutePath)
+                                }
+                                override fun onError(source: String?, e: Throwable?) {
+                                    compressCallback?.onCallback(source, null)
+                                }
+                            }).launch()
                     })
                     .forResult(object : OnResultCallbackListener<LocalMedia> {
                         override fun onResult(result: ArrayList<LocalMedia>) {
@@ -115,19 +132,41 @@ class TbchatMediaPickerPlugin :
             val jsonArray = JSONArray()
             for (media in result) {
                 val jsonObject = JSONObject()
+                jsonObject.put("id", media.id)
                 jsonObject.put("path", media.path ?: "")
                 jsonObject.put("realPath", media.realPath ?: media.path ?: "")
+                jsonObject.put("originalPath", media.originalPath ?: "")
+                jsonObject.put("compressPath", media.compressPath ?: "")
+                jsonObject.put("cutPath", media.cutPath ?: "")
+                jsonObject.put("watermarkPath", media.watermarkPath ?: "")
+                jsonObject.put("videoThumbnailPath", media.videoThumbnailPath ?: "")
+                jsonObject.put("sandboxPath", media.sandboxPath ?: "")
+                jsonObject.put("duration", media.duration)
+                jsonObject.put("isChecked", media.isChecked)
+                jsonObject.put("isCut", media.isCut)
+                jsonObject.put("position", media.position)
+                jsonObject.put("num", media.num)
                 jsonObject.put("mimeType", media.mimeType ?: "")
+                jsonObject.put("chooseModel", media.chooseModel)
+                jsonObject.put("isCameraSource", media.isCameraSource)
+                jsonObject.put("compressed", media.isCompressed)
                 jsonObject.put("width", media.width)
                 jsonObject.put("height", media.height)
-                jsonObject.put("duration", media.duration)
+                jsonObject.put("cropImageWidth", media.cropImageWidth)
+                jsonObject.put("cropImageHeight", media.cropImageHeight)
+                jsonObject.put("cropOffsetX", media.cropOffsetX)
+                jsonObject.put("cropOffsetY", media.cropOffsetY)
+                jsonObject.put("cropResultAspectRatio", media.cropResultAspectRatio.toDouble())
                 jsonObject.put("size", media.size)
+                jsonObject.put("isOriginal", media.isOriginal)
                 jsonObject.put("fileName", media.fileName ?: "")
+                jsonObject.put("parentFolderName", media.parentFolderName ?: "")
                 jsonObject.put("bucketId", media.bucketId)
-                jsonObject.put("id", media.id)
-                jsonObject.put("isCut", media.isCut)
-                jsonObject.put("cutPath", media.cutPath ?: "")
-                jsonObject.put("compressPath", media.compressPath ?: "")
+                jsonObject.put("dateAddedTime", media.dateAddedTime)
+                jsonObject.put("customData", media.customData ?: "")
+                jsonObject.put("isMaxSelectEnabledMask", media.isMaxSelectEnabledMask)
+                jsonObject.put("isGalleryEnabledMask", media.isGalleryEnabledMask)
+                jsonObject.put("isEditorImage", media.isEditorImage)
                 jsonArray.put(jsonObject)
             }
             

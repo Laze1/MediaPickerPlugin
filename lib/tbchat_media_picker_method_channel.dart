@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
+import 'media_entity.dart';
 import 'tbchat_media_picker_platform_interface.dart';
 
 /// An implementation of [TbchatMediaPickerPlatform] that uses method channels.
@@ -18,7 +19,7 @@ class MethodChannelTbchatMediaPicker extends TbchatMediaPickerPlatform {
   }
 
   @override
-  Future<List<Map<String, dynamic>>> pickMedia({
+  Future<List<MediaEntity>> pickMedia({
     int mimeType = 0,
     int maxSelectNum = 1,
     int maxSize = 0,
@@ -32,7 +33,7 @@ class MethodChannelTbchatMediaPicker extends TbchatMediaPickerPlatform {
       },
     );
     
-    if (result == null) {
+    if (result == null || result.isEmpty) {
       return [];
     }
     
@@ -41,7 +42,8 @@ class MethodChannelTbchatMediaPicker extends TbchatMediaPickerPlatform {
           .cast<Map<dynamic, dynamic>>()
           .map((map) => Map<String, dynamic>.from(map))
           .toList();
-      return jsonList;
+      
+      return jsonList.map((map) => MediaEntity.fromMap(map)).toList();
     } catch (e) {
       return [];
     }
