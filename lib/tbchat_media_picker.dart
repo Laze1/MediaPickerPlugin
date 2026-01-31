@@ -10,7 +10,8 @@ class TbchatMediaPicker {
   /// 
   /// [mimeType] 媒体类型：0-全部（图片和视频，默认），1-仅图片，2-仅视频
   /// [maxSelectNum] 最大选择数量，默认为1
-  /// [isSingleDirectReturn] 单选模式下是否直接返回，默认为false
+  /// [maxSize] 最大选择大小，默认为不限制
+  /// 
   /// 
   /// 返回选择的媒体文件列表，每个文件包含以下字段：
   /// - path: 文件路径
@@ -29,10 +30,12 @@ class TbchatMediaPicker {
   Future<List<Map<String, dynamic>>> pickMedia({
     int mimeType = 0, // 默认全部（图片和视频）
     int maxSelectNum = 1,
+    int maxSize = 0
   }) {
     return TbchatMediaPickerPlatform.instance.pickMedia(
       mimeType: mimeType,
       maxSelectNum: maxSelectNum,
+      maxSize: maxSize,
     );
   }
 }

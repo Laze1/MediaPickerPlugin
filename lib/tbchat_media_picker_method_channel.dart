@@ -21,12 +21,14 @@ class MethodChannelTbchatMediaPicker extends TbchatMediaPickerPlatform {
   Future<List<Map<String, dynamic>>> pickMedia({
     int mimeType = 0,
     int maxSelectNum = 1,
+    int maxSize = 0,
   }) async {
     final result = await methodChannel.invokeMethod<String>(
       'pickMedia',
       {
         'mimeType': mimeType,
         'maxSelectNum': maxSelectNum,
+        'maxSize': maxSize,
       },
     );
     

@@ -33,9 +33,6 @@ class TbchatMediaPickerPlugin :
     @Suppress("UNCHECKED_CAST")
     private var pendingResult: Result? = null
 
-    privete val defaultSelectMember:Int = 1;
-    private val defaultMimeType:Int = 0;
-
     override fun onAttachedToEngine(flutterPluginBinding: FlutterPlugin.FlutterPluginBinding) {
         channel = MethodChannel(flutterPluginBinding.binaryMessenger, "tbchat_media_picker")
         channel.setMethodCallHandler(this)
@@ -58,8 +55,9 @@ class TbchatMediaPickerPlugin :
             
             // 解析参数
             val args = call.arguments as? Map<*, *> ?: emptyMap<Any, Any>()
-            val mimeType = args["mimeType"] as? Int ?: defaultMimeType // 0: all, 1: image, 2: video
-            val maxSelectNum = args["maxSelectNum"] as? Int ?: defaultSelectMember
+            val mimeType = args["mimeType"] as? Int ?: 0 // 0: all, 1: image, 2: video
+            val maxSelectNum = args["maxSelectNum"] as? Int ?: 1
+            var maxSize = args["maxSize"] as? Long ?: 0L
             
             try {
                 // 创建选择器（只支持图片和视频，不支持音频）
@@ -71,12 +69,19 @@ class TbchatMediaPickerPlugin :
                 // 选择模式
                 val selectionMode = if (maxSelectNum > 1) SelectModeConfig.MULTIPLE else SelectModeConfig.SINGLE
 
+                // 如果 maxSize 为 0，则默认设置为1GB
+                if (maxSize == 0L) {
+                    maxSize = 1024 * 1024 * 1024L // 1GB
+                }
+
                 PictureSelector.create(activity!!)
                     .openGallery(mediaType)
                     .setMaxSelectNum(maxSelectNum)
                     .setSelectionMode(selectionMode)
                     .setImageEngine(GlideEngine.createGlideEngine())
                     .isOriginalControl(true) //原图选项
+                    .isDisplayCamera(false) //不显示相机
+                    .setSelectMaxFileSize(maxSize)
                     .setCompressEngine(CompressFileEngine { context, source, call ->
 
                     })
