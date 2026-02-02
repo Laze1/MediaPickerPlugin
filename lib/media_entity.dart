@@ -30,26 +30,11 @@ class MediaEntity {
   /// 时长（视频，单位：毫秒）
   final int duration;
   
-  /// 是否已选中
-  final bool isChecked;
-  
   /// 是否已裁剪
   final bool isCut;
   
-  /// 位置
-  final int position;
-  
-  /// 编号
-  final int number;
-  
   /// MIME类型（如：image/jpeg, video/mp4）
   final String mimeType;
-  
-  /// 选择模式
-  final int chooseModel;
-  
-  /// 是否来自相机
-  final bool isCameraSource;
   
   /// 是否已压缩
   final bool compressed;
@@ -83,64 +68,31 @@ class MediaEntity {
   
   /// 文件名
   final String fileName;
-  
-  /// 父文件夹名称
-  final String parentFolderName;
-  
-  /// 相册ID
-  final int bucketId;
-  
-  /// 添加时间（时间戳，毫秒）
-  final int dateAddedTime;
-  
-  /// 自定义数据
-  final String customData;
-  
-  /// 是否达到最大选择数遮罩
-  final bool isMaxSelectEnabledMask;
-  
-  /// 是否相册启用遮罩
-  final bool isGalleryEnabledMask;
-  
-  /// 是否编辑图片
-  final bool isEditorImage;
 
   const MediaEntity({
     required this.id,
     required this.path,
     required this.realPath,
-    required this.originalPath,
-    required this.compressPath,
-    required this.cutPath,
-    required this.watermarkPath,
-    required this.videoThumbnailPath,
-    required this.sandboxPath,
     required this.duration,
-    required this.isChecked,
-    required this.isCut,
-    required this.position,
-    required this.number,
-    required this.mimeType,
-    required this.chooseModel,
-    required this.isCameraSource,
-    required this.compressed,
-    required this.width,
-    required this.height,
-    required this.cropImageWidth,
-    required this.cropImageHeight,
-    required this.cropOffsetX,
-    required this.cropOffsetY,
-    required this.cropResultAspectRatio,
     required this.size,
-    required this.isOriginal,
     required this.fileName,
-    required this.parentFolderName,
-    required this.bucketId,
-    required this.dateAddedTime,
-    required this.customData,
-    required this.isMaxSelectEnabledMask,
-    required this.isGalleryEnabledMask,
-    required this.isEditorImage,
+    this.originalPath = '',
+    this.compressPath = '',
+    this.cutPath = '',
+    this.watermarkPath = '',
+    this.videoThumbnailPath = '',
+    this.sandboxPath = '',
+    this.isCut = false,
+    this.mimeType = '',
+    this.compressed = false,
+    this.width = 0,
+    this.height = 0,
+    this.cropImageWidth = 0,
+    this.cropImageHeight = 0,
+    this.cropOffsetX = 0,
+    this.cropOffsetY = 0,
+    this.cropResultAspectRatio = 0.0,
+    this.isOriginal = false,
   });
 
   /// 从 Map 创建 MediaEntity
@@ -156,13 +108,8 @@ class MediaEntity {
       videoThumbnailPath: map['videoThumbnailPath'] as String? ?? '',
       sandboxPath: map['sandboxPath'] as String? ?? '',
       duration: map['duration'] as int? ?? 0,
-      isChecked: map['isChecked'] as bool? ?? false,
       isCut: map['isCut'] as bool? ?? false,
-      position: map['position'] as int? ?? 0,
-      number: map['num'] as int? ?? 0,
       mimeType: map['mimeType'] as String? ?? '',
-      chooseModel: map['chooseModel'] as int? ?? 0,
-      isCameraSource: map['isCameraSource'] as bool? ?? false,
       compressed: map['compressed'] as bool? ?? false,
       width: map['width'] as int? ?? 0,
       height: map['height'] as int? ?? 0,
@@ -174,13 +121,6 @@ class MediaEntity {
       size: map['size'] as int? ?? 0,
       isOriginal: map['isOriginal'] as bool? ?? false,
       fileName: map['fileName'] as String? ?? '',
-      parentFolderName: map['parentFolderName'] as String? ?? '',
-      bucketId: map['bucketId'] as int? ?? 0,
-      dateAddedTime: map['dateAddedTime'] as int? ?? 0,
-      customData: map['customData'] as String? ?? '',
-      isMaxSelectEnabledMask: map['isMaxSelectEnabledMask'] as bool? ?? false,
-      isGalleryEnabledMask: map['isGalleryEnabledMask'] as bool? ?? false,
-      isEditorImage: map['isEditorImage'] as bool? ?? false,
     );
   }
 
@@ -197,13 +137,8 @@ class MediaEntity {
       'videoThumbnailPath': videoThumbnailPath,
       'sandboxPath': sandboxPath,
       'duration': duration,
-      'isChecked': isChecked,
       'isCut': isCut,
-      'position': position,
-      'num': number,
       'mimeType': mimeType,
-      'chooseModel': chooseModel,
-      'isCameraSource': isCameraSource,
       'compressed': compressed,
       'width': width,
       'height': height,
@@ -215,13 +150,6 @@ class MediaEntity {
       'size': size,
       'isOriginal': isOriginal,
       'fileName': fileName,
-      'parentFolderName': parentFolderName,
-      'bucketId': bucketId,
-      'dateAddedTime': dateAddedTime,
-      'customData': customData,
-      'isMaxSelectEnabledMask': isMaxSelectEnabledMask,
-      'isGalleryEnabledMask': isGalleryEnabledMask,
-      'isEditorImage': isEditorImage,
     };
   }
 

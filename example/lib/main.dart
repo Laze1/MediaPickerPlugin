@@ -264,37 +264,10 @@ class _MyAppState extends State<MyApp> {
                                 if (media.sandboxPath.isNotEmpty)
                                   _buildInfoRow('沙箱路径', media.sandboxPath),
                                 
-                                // 相册信息
-                                if (media.bucketId > 0)
-                                  _buildInfoRow('相册ID', media.bucketId.toString()),
-                                if (media.parentFolderName.isNotEmpty)
-                                  _buildInfoRow('父文件夹', media.parentFolderName),
-                                
                                 // 状态信息
-                                _buildInfoRow('已选中', media.isChecked ? '是' : '否'),
                                 _buildInfoRow('已裁剪', media.isCut ? '是' : '否'),
                                 _buildInfoRow('已压缩', media.compressed ? '是' : '否'),
                                 _buildInfoRow('原图', media.isOriginal ? '是' : '否'),
-                                _buildInfoRow('来源', '${media.isCameraSource ? '相机' : '相册'}'),
-                                _buildInfoRow('已编辑', media.isEditorImage ? '是' : '否'),
-                                
-
-                                
-                                // 其他信息
-                                if (media.position > 0)
-                                  _buildInfoRow('位置', media.position.toString()),
-                                if (media.number > 0)
-                                  _buildInfoRow('编号', media.number.toString()),
-                                if (media.chooseModel > 0)
-                                  _buildInfoRow('选择模式', media.chooseModel.toString()),
-                                if (media.dateAddedTime > 0)
-                                  _buildInfoRow('添加时间', DateTime.fromMillisecondsSinceEpoch(media.dateAddedTime).toString()),
-                                if (media.customData.isNotEmpty)
-                                  _buildInfoRow('自定义数据', media.customData),
-                                if (media.isMaxSelectEnabledMask)
-                                  _buildInfoRow('最大选择遮罩', '启用'),
-                                if (media.isGalleryEnabledMask)
-                                  _buildInfoRow('相册遮罩', '启用'),
                                 ],
                             ),
                           ),
