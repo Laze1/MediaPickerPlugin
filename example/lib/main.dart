@@ -70,17 +70,13 @@ class _MyAppState extends State<MyApp> {
     }
   }
 
-  String _formatDuration(int milliseconds) {
-    if (milliseconds < 1000) {
-      return '${milliseconds}ms';
-    }
-    final seconds = milliseconds ~/ 1000;
+  String _formatDuration(int seconds) {
     final minutes = seconds ~/ 60;
     final remainingSeconds = seconds % 60;
     if (minutes > 0) {
-      return '${minutes}分${remainingSeconds}秒';
+      return '$minutes分$remainingSeconds秒';
     }
-    return '${remainingSeconds}秒';
+    return '$remainingSeconds秒';
   }
 
   /// 获取文件大小（异步）
@@ -236,8 +232,6 @@ class _MyAppState extends State<MyApp> {
                                 // 路径信息
                                 if (media.path.isNotEmpty)
                                   _buildInfoRow('路径', media.path),
-                                if (media.realPath.isNotEmpty && media.realPath != media.path)
-                                  _buildInfoRow('真实路径', media.realPath),
                                 if (media.originalPath.isNotEmpty && media.originalPath != media.path)
                                   _buildInfoRow('原始路径', media.originalPath),
                                 if (media.cutPath.isNotEmpty)

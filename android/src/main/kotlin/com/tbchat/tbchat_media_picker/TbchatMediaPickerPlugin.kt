@@ -2,7 +2,15 @@ package com.tbchat.tbchat_media_picker
 
 import android.app.Activity
 import android.content.Context
+import android.graphics.Bitmap
+import android.media.MediaMetadataRetriever
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
+import android.util.Log
+import java.io.FileOutputStream
+import java.io.OutputStream
+import java.util.UUID
 import com.luck.picture.lib.basic.PictureSelector
 import com.luck.picture.lib.config.SelectMimeType
 import com.luck.picture.lib.config.SelectModeConfig
@@ -10,6 +18,7 @@ import com.luck.picture.lib.engine.CompressFileEngine
 import com.luck.picture.lib.entity.LocalMedia
 import com.luck.picture.lib.interfaces.OnKeyValueResultCallbackListener
 import com.luck.picture.lib.interfaces.OnResultCallbackListener
+import com.luck.picture.lib.interfaces.OnVideoThumbnailEventListener
 import com.luck.picture.lib.style.PictureSelectorStyle
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.embedding.engine.plugins.activity.ActivityAware
@@ -104,6 +113,7 @@ class TbchatMediaPickerPlugin :
                     })
                     .forResult(object : OnResultCallbackListener<LocalMedia> {
                         override fun onResult(result: ArrayList<LocalMedia>) {
+                            Log.d("TbchatMediaPickerPlugin", "onResult: $result")
                             handleSelectionResult(result)
                         }
                         
@@ -131,17 +141,19 @@ class TbchatMediaPickerPlugin :
 
             val jsonArray = JSONArray()
             for (media in result) {
+                if (media.mimeType?.startsWith("video/") == true) {
+                    media.videoThumbnailPath = getVideoThumbnail(activity!!, media.realPath ?: "")
+                }
                 val jsonObject = JSONObject()
                 jsonObject.put("id", media.id)
-                jsonObject.put("path", media.path ?: "")
-                jsonObject.put("realPath", media.realPath ?: media.path ?: "")
+                jsonObject.put("path", media.realPath ?: "")  //直接使用真实路径，不使用path
                 jsonObject.put("originalPath", media.originalPath ?: "")
                 jsonObject.put("compressPath", media.compressPath ?: "")
                 jsonObject.put("cutPath", media.cutPath ?: "")
                 jsonObject.put("watermarkPath", media.watermarkPath ?: "")
                 jsonObject.put("videoThumbnailPath", media.videoThumbnailPath ?: "")
                 jsonObject.put("sandboxPath", media.sandboxPath ?: "")
-                jsonObject.put("duration", media.duration)
+                jsonObject.put("duration", media.duration / 1000) // 转换为秒
                 jsonObject.put("isChecked", media.isChecked)
                 jsonObject.put("isCut", media.isCut)
                 jsonObject.put("position", media.position)
@@ -176,6 +188,29 @@ class TbchatMediaPickerPlugin :
             pendingResult?.error("RESULT_ERROR", "Failed to process result: ${e.message}", null)
             pendingResult = null
         }
+    }
+
+    //获取视频缩略图
+    private fun getVideoThumbnail(context: Context, videoPath: String): String {
+        val retriever = MediaMetadataRetriever()
+        retriever.setDataSource(videoPath)
+        val bitmap = retriever.getFrameAtTime(
+            0,
+            MediaMetadataRetriever.OPTION_CLOSEST_SYNC
+        )
+        retriever.release()
+        if (bitmap != null) {
+            val cacheDir = context.cacheDir
+            val thumbFile = File(
+                cacheDir,
+                "video_thumb_${UUID.randomUUID()}.jpg"
+            )
+            FileOutputStream(thumbFile).use { out: OutputStream ->
+                bitmap.compress(Bitmap.CompressFormat.JPEG, 85, out)
+            }
+            return thumbFile.absolutePath
+        }
+        return ""
     }
 
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {

@@ -3,11 +3,8 @@ class MediaEntity {
   /// 媒体ID
   final int id;
   
-  /// 文件路径
+  /// 文件路径(真实路径)
   final String path;
-  
-  /// 真实文件路径
-  final String realPath;
   
   /// 原始路径
   final String originalPath;
@@ -27,7 +24,7 @@ class MediaEntity {
   /// 沙箱路径
   final String sandboxPath;
   
-  /// 时长（视频，单位：毫秒）
+  /// 时长（视频，单位：秒）
   final int duration;
   
   /// 是否已裁剪
@@ -72,7 +69,6 @@ class MediaEntity {
   const MediaEntity({
     required this.id,
     required this.path,
-    required this.realPath,
     required this.duration,
     required this.size,
     required this.fileName,
@@ -100,7 +96,6 @@ class MediaEntity {
     return MediaEntity(
       id: map['id'] as int? ?? 0,
       path: map['path'] as String? ?? '',
-      realPath: map['realPath'] as String? ?? '',
       originalPath: map['originalPath'] as String? ?? '',
       compressPath: map['compressPath'] as String? ?? '',
       cutPath: map['cutPath'] as String? ?? '',
@@ -129,7 +124,6 @@ class MediaEntity {
     return {
       'id': id,
       'path': path,
-      'realPath': realPath,
       'originalPath': originalPath,
       'compressPath': compressPath,
       'cutPath': cutPath,
