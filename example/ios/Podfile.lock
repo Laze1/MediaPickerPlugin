@@ -1,0 +1,56 @@
+PODS:
+  - Flutter (1.0.0)
+  - HXPhotoPicker (5.0.5):
+    - HXPhotoPicker/Default (= 5.0.5)
+  - HXPhotoPicker/Camera (5.0.5):
+    - HXPhotoPicker/Camera/Lite (= 5.0.5)
+    - HXPhotoPicker/Camera/Location (= 5.0.5)
+  - HXPhotoPicker/Camera/Lite (5.0.5):
+    - HXPhotoPicker/Core
+  - HXPhotoPicker/Camera/Location (5.0.5):
+    - HXPhotoPicker/Camera/Lite
+  - HXPhotoPicker/Core (5.0.5):
+    - HXPhotoPicker/Resources
+  - HXPhotoPicker/Default (5.0.5):
+    - HXPhotoPicker/Camera
+    - HXPhotoPicker/Editor
+    - HXPhotoPicker/Picker
+  - HXPhotoPicker/Editor (5.0.5):
+    - HXPhotoPicker/EditorView
+  - HXPhotoPicker/EditorView (5.0.5):
+    - HXPhotoPicker/Core
+  - HXPhotoPicker/Picker (5.0.5):
+    - HXPhotoPicker/Core
+  - HXPhotoPicker/Resources (5.0.5)
+  - integration_test (0.0.1):
+    - Flutter
+  - tbchat_media_picker (0.0.1):
+    - Flutter
+    - HXPhotoPicker (= 5.0.5)
+
+DEPENDENCIES:
+  - Flutter (from `Flutter`)
+  - integration_test (from `.symlinks/plugins/integration_test/ios`)
+  - tbchat_media_picker (from `.symlinks/plugins/tbchat_media_picker/ios`)
+
+SPEC REPOS:
+  trunk:
+    - HXPhotoPicker
+
+EXTERNAL SOURCES:
+  Flutter:
+    :path: Flutter
+  integration_test:
+    :path: ".symlinks/plugins/integration_test/ios"
+  tbchat_media_picker:
+    :path: ".symlinks/plugins/tbchat_media_picker/ios"
+
+SPEC CHECKSUMS:
+  Flutter: cabc95a1d2626b1b06e7179b784ebcf0c0cde467
+  HXPhotoPicker: 73952d15fa0ea68a4757b786a506bdf1e44895c4
+  integration_test: 4a889634ef21a45d28d50d622cf412dc6d9f586e
+  tbchat_media_picker: 5b8baf4f7d8be688dfc55b80c1088fb9df46815a
+
+PODFILE CHECKSUM: 3c63482e143d1b91d2d2560aee9fb04ecc74ac7e
+
+COCOAPODS: 1.16.2
