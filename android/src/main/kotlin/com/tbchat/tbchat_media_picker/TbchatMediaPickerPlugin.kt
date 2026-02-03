@@ -5,8 +5,6 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.media.MediaMetadataRetriever
 import android.net.Uri
-import android.os.Handler
-import android.os.Looper
 import android.util.Log
 import java.io.FileOutputStream
 import java.io.OutputStream
@@ -39,6 +37,7 @@ class TbchatMediaPickerPlugin :
     FlutterPlugin,
     MethodCallHandler,
     ActivityAware {
+
     // The MethodChannel that will the communication between Flutter and native Android
     private lateinit var channel: MethodChannel
     private var activity: Activity? = null
@@ -94,6 +93,12 @@ class TbchatMediaPickerPlugin :
                     .isOriginalControl(true) //原图选项
                     .isDisplayCamera(false) //不显示相机
                     .setSelectMaxFileSize(maxSize)
+                    .setVideoThumbnailListener { context, videoPath, thumbnailCallback ->
+                        thumbnailCallback?.onCallback(
+                            videoPath,
+                            getVideoThumbnail(context!!, videoPath!!)
+                        )
+                    }
                     .setCompressEngine(CompressFileEngine { context, source, compressCallback ->
                         Luban.with(context)
                             .load(source)
@@ -142,7 +147,7 @@ class TbchatMediaPickerPlugin :
             val jsonArray = JSONArray()
             for (media in result) {
                 if (media.mimeType?.startsWith("video/") == true) {
-                    media.videoThumbnailPath = getVideoThumbnail(activity!!, media.realPath ?: "")
+                    // media.videoThumbnailPath = getVideoThumbnail(activity!!, media.realPath ?: "")
                 }
                 val jsonObject = JSONObject()
                 jsonObject.put("id", media.id)
@@ -192,25 +197,29 @@ class TbchatMediaPickerPlugin :
 
     //获取视频缩略图
     private fun getVideoThumbnail(context: Context, videoPath: String): String {
-        val retriever = MediaMetadataRetriever()
-        retriever.setDataSource(videoPath)
-        val bitmap = retriever.getFrameAtTime(
-            0,
-            MediaMetadataRetriever.OPTION_CLOSEST_SYNC
-        )
-        retriever.release()
-        if (bitmap != null) {
-            val cacheDir = context.cacheDir
-            val thumbFile = File(
-                cacheDir,
-                "video_thumb_${UUID.randomUUID()}.jpg"
+        return try {
+            val retriever = MediaMetadataRetriever()
+            retriever.setDataSource(context, Uri.parse(videoPath))
+            val bitmap = retriever.getFrameAtTime(
+                0,
+                MediaMetadataRetriever.OPTION_CLOSEST_SYNC
             )
-            FileOutputStream(thumbFile).use { out: OutputStream ->
-                bitmap.compress(Bitmap.CompressFormat.JPEG, 85, out)
-            }
-            return thumbFile.absolutePath
+            retriever.release()
+            if (bitmap != null) {
+                val cacheDir = context.cacheDir
+                val thumbFile = File(
+                    cacheDir,
+                    "video_thumb_${UUID.randomUUID()}.jpg"
+                )
+                FileOutputStream(thumbFile).use { out: OutputStream ->
+                    bitmap.compress(Bitmap.CompressFormat.JPEG, 85, out)
+                }
+                thumbFile.absolutePath
+            } else ""
+        } catch (e: Exception) {
+            Log.e("TbchatMediaPickerPlugin", "getVideoThumbnail failed: $e")
+            ""
         }
-        return ""
     }
 
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
