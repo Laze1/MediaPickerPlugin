@@ -81,11 +81,27 @@ class TbchatMediaPickerPlugin : FlutterPlugin, MethodCallHandler, ActivityAware 
                 val style = PictureSelectorStyle()
                 style.bottomBarStyle.apply {
                     bottomNarBarHeight = 500
+                    bottomPreviewNormalText = "#07C160"
                     isCompleteCountTips = false
+
                 }
 
                 PictureSelector.create(activity!!)
                     .openGallery(mediaType)
+                    .setSelectionMode(selectionMode)
+                    .setImageEngine(GlideEngine.createGlideEngine())
+                    // .setLanguage() //设置相册语言
+                    .setMaxSelectNum(maxSelectNum) // 设置图片最大选择数量
+                    .setMaxVideoSelectNum(maxSelectNum) // 设置视频最大选择数量
+                    .isWithSelectVideoImage(true) // 支持图片视频同选
+                    .isOriginalControl(true) // 原图选项
+                    .isDisplayCamera(false) // 不显示相机
+                    .setSelectMaxFileSize(maxSize) // 设置最大选择大小
+                    .isPageStrategy(true, 40) // 分页模式，每页10条
+                    .isFilterSizeDuration(true) // 过滤视频小于1秒和文件小于1kb
+                    .isGif(true) // 是否显示gif文件
+                    .isWebp(true) // 是否显示webp文件
+                    .isBmp(true) // 是否显示bmp文件
                     .setSelectorUIStyle(style) // 设置相册主题
                     // .setInjectLayoutResourceListener { context, layoutResId ->
                     //     when (layoutResId) {
@@ -94,20 +110,6 @@ class TbchatMediaPickerPlugin : FlutterPlugin, MethodCallHandler, ActivityAware 
                     //         else -> layoutResId
                     //     }
                     // }
-                    // .setLanguage() //设置相册语言
-                    .setMaxSelectNum(maxSelectNum) // 设置图片最大选择数量
-                    .setMaxVideoSelectNum(maxSelectNum) // 设置视频最大选择数量
-                    .isWithSelectVideoImage(true) // 支持图片视频同选
-                    .setSelectionMode(selectionMode)
-                    .setImageEngine(GlideEngine.createGlideEngine())
-                    .isOriginalControl(true) // 原图选项
-                    .isDisplayCamera(false) // 不显示相机
-                    .setSelectMaxFileSize(maxSize)
-                    .isPageStrategy(true, 40) // 分页模式，每页10条
-                    .isFilterSizeDuration(true) // 过滤视频小于1秒和文件小于1kb
-                    .isGif(true) // 是否显示gif文件
-                    .isWebp(true) // 是否显示webp文件
-                    .isBmp(true) // 是否显示bmp文件
                     .setVideoThumbnailListener { context, videoPath, thumbnailCallback ->
                         thumbnailCallback?.onCallback(
                             videoPath,
