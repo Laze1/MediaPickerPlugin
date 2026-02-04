@@ -6,17 +6,12 @@ import android.graphics.Bitmap
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.util.Log
-import java.io.FileOutputStream
-import java.io.OutputStream
-import java.util.UUID
 import com.luck.picture.lib.basic.PictureSelector
 import com.luck.picture.lib.config.SelectMimeType
 import com.luck.picture.lib.config.SelectModeConfig
 import com.luck.picture.lib.engine.CompressFileEngine
 import com.luck.picture.lib.entity.LocalMedia
-import com.luck.picture.lib.interfaces.OnKeyValueResultCallbackListener
 import com.luck.picture.lib.interfaces.OnResultCallbackListener
-import com.luck.picture.lib.interfaces.OnVideoThumbnailEventListener
 import com.luck.picture.lib.style.PictureSelectorStyle
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.embedding.engine.plugins.activity.ActivityAware
@@ -25,18 +20,18 @@ import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.common.MethodChannel.MethodCallHandler
 import io.flutter.plugin.common.MethodChannel.Result
+import java.io.File
+import java.io.FileOutputStream
+import java.io.OutputStream
+import java.util.ArrayList
+import java.util.UUID
 import org.json.JSONArray
 import org.json.JSONObject
 import top.zibin.luban.Luban
 import top.zibin.luban.OnNewCompressListener
-import java.io.File
-import java.util.ArrayList
 
 /** TbchatMediaPickerPlugin */
-class TbchatMediaPickerPlugin :
-    FlutterPlugin,
-    MethodCallHandler,
-    ActivityAware {
+class TbchatMediaPickerPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
 
     // The MethodChannel that will the communication between Flutter and native Android
     private lateinit var channel: MethodChannel
@@ -49,10 +44,7 @@ class TbchatMediaPickerPlugin :
         channel.setMethodCallHandler(this)
     }
 
-    override fun onMethodCall(
-        call: MethodCall,
-        result: Result
-    ) {
+    override fun onMethodCall(call: MethodCall, result: Result) {
         if (call.method == "getPlatformVersion") {
             result.success("Android ${android.os.Build.VERSION.RELEASE}")
         } else if (call.method == "pickMedia") {
@@ -60,75 +52,119 @@ class TbchatMediaPickerPlugin :
                 result.error("NO_ACTIVITY", "Activity is not available", null)
                 return
             }
-            
+
             // 保存 result，在回调中使用
             pendingResult = result
-            
+
             // 解析参数
             val args = call.arguments as? Map<*, *> ?: emptyMap<Any, Any>()
             val mimeType = args["mimeType"] as? Int ?: 0 // 0: all, 1: image, 2: video
             val maxSelectNum = args["maxSelectNum"] as? Int ?: 1
             var maxSize = args["maxSize"] as? Long ?: 0L
-            
+
             try {
                 // 创建选择器（只支持图片和视频，不支持音频）
-                val mediaType = when (mimeType) {
-                    1 -> SelectMimeType.TYPE_IMAGE
-                    2 -> SelectMimeType.TYPE_VIDEO
-                    else -> SelectMimeType.TYPE_ALL // 默认全部（图片和视频）
-                }
+                val mediaType =
+                    when (mimeType) {
+                        1 -> SelectMimeType.TYPE_IMAGE
+                        2 -> SelectMimeType.TYPE_VIDEO
+                        else -> SelectMimeType.TYPE_ALL // 默认全部（图片和视频）
+                    }
                 // 选择模式
-                val selectionMode = if (maxSelectNum > 1) SelectModeConfig.MULTIPLE else SelectModeConfig.SINGLE
+                val selectionMode =
+                    if (maxSelectNum > 1) SelectModeConfig.MULTIPLE else SelectModeConfig.SINGLE
 
                 // 如果 maxSize 为 0，则默认设置为1GB
                 if (maxSize == 0L) {
                     maxSize = 1024 * 1024 * 1024L // 1GB
                 }
+                val style = PictureSelectorStyle()
+                style.bottomBarStyle.apply {
+                    bottomNarBarHeight = 500
+                    isCompleteCountTips = false
+                }
 
                 PictureSelector.create(activity!!)
                     .openGallery(mediaType)
-                    .setMaxSelectNum(maxSelectNum)
+                    .setSelectorUIStyle(style) // 设置相册主题
+                    // .setInjectLayoutResourceListener { context, layoutResId ->
+                    //     when (layoutResId) {
+                    //         // R.layout.picture_selector_layout ->
+                    // R.layout.picture_selector_layout_custom
+                    //         else -> layoutResId
+                    //     }
+                    // }
+                    // .setLanguage() //设置相册语言
+                    .setMaxSelectNum(maxSelectNum) // 设置图片最大选择数量
+                    .setMaxVideoSelectNum(maxSelectNum) // 设置视频最大选择数量
+                    .isWithSelectVideoImage(true) // 支持图片视频同选
                     .setSelectionMode(selectionMode)
                     .setImageEngine(GlideEngine.createGlideEngine())
-                    .isOriginalControl(true) //原图选项
-                    .isDisplayCamera(false) //不显示相机
+                    .isOriginalControl(true) // 原图选项
+                    .isDisplayCamera(false) // 不显示相机
                     .setSelectMaxFileSize(maxSize)
+                    .isPageStrategy(true, 40) // 分页模式，每页10条
+                    .isFilterSizeDuration(true) // 过滤视频小于1秒和文件小于1kb
+                    .isGif(true) // 是否显示gif文件
+                    .isWebp(true) // 是否显示webp文件
+                    .isBmp(true) // 是否显示bmp文件
                     .setVideoThumbnailListener { context, videoPath, thumbnailCallback ->
                         thumbnailCallback?.onCallback(
                             videoPath,
                             getVideoThumbnail(context!!, videoPath!!)
                         )
                     }
-                    .setCompressEngine(CompressFileEngine { context, source, compressCallback ->
-                        Luban.with(context)
-                            .load(source)
-                            .setTargetDir(context.cacheDir.path)
-                            .setCompressListener(object : OnNewCompressListener {
-                                override fun onStart() {}
-                                override fun onSuccess(
-                                    source: String?,
-                                    compressFile: File?
-                                ) {
-                                    compressCallback?.onCallback(source,compressFile?.absolutePath)
-                                }
-                                override fun onError(source: String?, e: Throwable?) {
-                                    compressCallback?.onCallback(source, null)
-                                }
-                            }).launch()
-                    })
-                    .forResult(object : OnResultCallbackListener<LocalMedia> {
-                        override fun onResult(result: ArrayList<LocalMedia>) {
-                            Log.d("TbchatMediaPickerPlugin", "onResult: $result")
-                            handleSelectionResult(result)
+                    .setCompressEngine(
+                        CompressFileEngine { context, source, compressCallback ->
+                            Luban.with(context)
+                                .load(source)
+                                .setTargetDir(context.cacheDir.path)
+                                .setCompressListener(
+                                    object : OnNewCompressListener {
+                                        override fun onStart() {}
+                                        override fun onSuccess(
+                                            source: String?,
+                                            compressFile: File?
+                                        ) {
+                                            compressCallback?.onCallback(
+                                                source,
+                                                compressFile?.absolutePath
+                                            )
+                                        }
+
+                                        override fun onError(
+                                            source: String?,
+                                            e: Throwable?
+                                        ) {
+                                            compressCallback?.onCallback(
+                                                source,
+                                                null
+                                            )
+                                        }
+                                    }
+                                )
+                                .launch()
                         }
-                        
-                        override fun onCancel() {
-                            pendingResult?.success(JSONArray().toString())
-                            pendingResult = null
+                    )
+                    .forResult(
+                        object : OnResultCallbackListener<LocalMedia> {
+                            override fun onResult(result: ArrayList<LocalMedia>) {
+                                Log.d("TbchatMediaPickerPlugin", "onResult: $result")
+                                handleSelectionResult(result)
+                            }
+
+                            override fun onCancel() {
+                                pendingResult?.success(JSONArray().toString())
+                                pendingResult = null
+                            }
                         }
-                    })
+                    )
             } catch (e: Exception) {
-                pendingResult?.error("PICK_ERROR", "Failed to open media picker: ${e.message}", null)
+                pendingResult?.error(
+                    "PICK_ERROR",
+                    "Failed to open media picker: ${e.message}",
+                    null
+                )
                 pendingResult = null
             }
         } else {
@@ -147,11 +183,12 @@ class TbchatMediaPickerPlugin :
             val jsonArray = JSONArray()
             for (media in result) {
                 if (media.mimeType?.startsWith("video/") == true) {
-                    // media.videoThumbnailPath = getVideoThumbnail(activity!!, media.realPath ?: "")
+                    // media.videoThumbnailPath = getVideoThumbnail(activity!!, media.realPath ?:
+                    // "")
                 }
                 val jsonObject = JSONObject()
                 jsonObject.put("id", media.id)
-                jsonObject.put("path", media.realPath ?: "")  //直接使用真实路径，不使用path
+                jsonObject.put("path", media.realPath ?: "") // 直接使用真实路径，不使用path
                 jsonObject.put("originalPath", media.originalPath ?: "")
                 jsonObject.put("compressPath", media.compressPath ?: "")
                 jsonObject.put("cutPath", media.cutPath ?: "")
@@ -186,7 +223,7 @@ class TbchatMediaPickerPlugin :
                 jsonObject.put("isEditorImage", media.isEditorImage)
                 jsonArray.put(jsonObject)
             }
-            
+
             pendingResult?.success(jsonArray.toString())
             pendingResult = null
         } catch (e: Exception) {
@@ -195,22 +232,16 @@ class TbchatMediaPickerPlugin :
         }
     }
 
-    //获取视频缩略图
+    // 获取视频缩略图
     private fun getVideoThumbnail(context: Context, videoPath: String): String {
         return try {
             val retriever = MediaMetadataRetriever()
             retriever.setDataSource(context, Uri.parse(videoPath))
-            val bitmap = retriever.getFrameAtTime(
-                0,
-                MediaMetadataRetriever.OPTION_CLOSEST_SYNC
-            )
+            val bitmap = retriever.getFrameAtTime(0, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
             retriever.release()
             if (bitmap != null) {
                 val cacheDir = context.cacheDir
-                val thumbFile = File(
-                    cacheDir,
-                    "video_thumb_${UUID.randomUUID()}.jpg"
-                )
+                val thumbFile = File(cacheDir, "video_thumb_${UUID.randomUUID()}.jpg")
                 FileOutputStream(thumbFile).use { out: OutputStream ->
                     bitmap.compress(Bitmap.CompressFormat.JPEG, 85, out)
                 }
