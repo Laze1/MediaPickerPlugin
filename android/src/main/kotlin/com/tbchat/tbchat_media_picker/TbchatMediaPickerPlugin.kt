@@ -30,14 +30,23 @@ import org.json.JSONArray
 import org.json.JSONObject
 import top.zibin.luban.Luban
 import top.zibin.luban.OnNewCompressListener
-import androidx.core.graphics.toColorInt
 
-/** TbchatMediaPickerPlugin */
+/**
+ * Flutter 媒体选择插件（Android 端）.
+ *
+ * 通过 MethodChannel "tbchat_media_picker" 与 Flutter 通信，使用本地 PictureSelector 打开相册，
+ * 支持图片/视频选择、压缩（Luban）、视频首帧缩略图，并将结果序列化为 JSON 数组回传，
+ * 与 [MediaEntity] 字段一一对应。
+ */
 class TbchatMediaPickerPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
 
-    // The MethodChannel that will the communication between Flutter and native Android
+    /** 与 Flutter 通信的 MethodChannel，名称需与 Dart 端一致 */
     private lateinit var channel: MethodChannel
+
+    /** 当前 Flutter 宿主 Activity，用于 present 选择器；由 ActivityAware 在 attach/detach 时赋值 */
     private var activity: Activity? = null
+
+    /** pickMedia 的异步回调，在用户完成选择或取消后调用一次并置空，避免重复回调 */
     @Suppress("UNCHECKED_CAST")
     private var pendingResult: Result? = null
 
@@ -46,39 +55,37 @@ class TbchatMediaPickerPlugin : FlutterPlugin, MethodCallHandler, ActivityAware 
         channel.setMethodCallHandler(this)
     }
 
+    /**
+     * 处理 Flutter 侧方法调用.
+     * - pickMedia: 打开相册选择图片/视频，参数 mimeType/maxSelectNum/maxSize，结果通过 pendingResult 回传 JSON 数组或错误.
+     */
     override fun onMethodCall(call: MethodCall, result: Result) {
-        if (call.method == "getPlatformVersion") {
-            result.success("Android ${android.os.Build.VERSION.RELEASE}")
-        } else if (call.method == "pickMedia") {
+         if (call.method == "pickMedia") {
             if (activity == null) {
                 result.error("NO_ACTIVITY", "Activity is not available", null)
                 return
             }
 
-            // 保存 result，在回调中使用
             pendingResult = result
 
             // 解析参数
             val args = call.arguments as? Map<*, *> ?: emptyMap<Any, Any>()
-            val mimeType = args["mimeType"] as? Int ?: 0 // 0: all, 1: image, 2: video
+            val mimeType = args["mimeType"] as? Int ?: 0 // 0: 全部(图+视频), 1: 仅图片, 2: 仅视频
             val maxSelectNum = args["maxSelectNum"] as? Int ?: 1
             var maxSize = args["maxSize"] as? Long ?: 0L
 
             try {
-                // 创建选择器（只支持图片和视频，不支持音频）
                 val mediaType =
                     when (mimeType) {
                         1 -> SelectMimeType.TYPE_IMAGE
                         2 -> SelectMimeType.TYPE_VIDEO
-                        else -> SelectMimeType.TYPE_ALL // 默认全部（图片和视频）
+                        else -> SelectMimeType.TYPE_ALL
                     }
-                // 选择模式
                 val selectionMode =
                     if (maxSelectNum > 1) SelectModeConfig.MULTIPLE else SelectModeConfig.SINGLE
 
-                // 如果 maxSize 为 0，则默认设置为1GB
                 if (maxSize == 0L) {
-                    maxSize = 1024 * 1024 * 1024L // 1GB
+                    maxSize = 1024 * 1024 * 1024L // 0 表示不限制，此处按 1GB 处理
                 }
 
                 PictureSelector.create(activity!!)
@@ -97,13 +104,6 @@ class TbchatMediaPickerPlugin : FlutterPlugin, MethodCallHandler, ActivityAware 
                     .isGif(true) // 是否显示gif文件
                     .isWebp(true) // 是否显示webp文件
                     .isBmp(true) // 是否显示bmp文件
-                    // .setInjectLayoutResourceListener { context, layoutResId ->
-                    //     when (layoutResId) {
-                    //         // R.layout.picture_selector_layout ->
-                    // R.layout.picture_selector_layout_custom
-                    //         else -> layoutResId
-                    //     }
-                    // }
                     .setVideoThumbnailListener { context, videoPath, thumbnailCallback ->
                         thumbnailCallback?.onCallback(
                             videoPath,
@@ -168,6 +168,10 @@ class TbchatMediaPickerPlugin : FlutterPlugin, MethodCallHandler, ActivityAware 
         }
     }
 
+    /**
+     * 将 PictureSelector 返回的 [LocalMedia] 列表转成 JSON 数组字符串并回传 Flutter.
+     * 字段与 Dart 端 MediaEntity.fromMap 一致，便于双端统一解析.
+     */
     private fun handleSelectionResult(result: ArrayList<LocalMedia>) {
         try {
             if (result.isEmpty()) {
@@ -178,10 +182,6 @@ class TbchatMediaPickerPlugin : FlutterPlugin, MethodCallHandler, ActivityAware 
 
             val jsonArray = JSONArray()
             for (media in result) {
-                if (media.mimeType?.startsWith("video/") == true) {
-                    // media.videoThumbnailPath = getVideoThumbnail(activity!!, media.realPath ?:
-                    // "")
-                }
                 val jsonObject = JSONObject()
                 jsonObject.put("id", media.id)
                 jsonObject.put("path", media.realPath ?: "") // 直接使用真实路径，不使用path
@@ -228,7 +228,11 @@ class TbchatMediaPickerPlugin : FlutterPlugin, MethodCallHandler, ActivityAware 
         }
     }
 
-    // 获取视频缩略图
+    /**
+     * 取视频首帧作为缩略图，写入 cache 目录并返回本地路径.
+     * 若 [videoPath] 为 content:// 则使用 [Context] 重载的 setDataSource，避免 setDataSource(String) 报错.
+     * 失败时返回空字符串，由 PictureSelector 使用默认处理.
+     */
     private fun getVideoThumbnail(context: Context, videoPath: String): String {
         return try {
             val retriever = MediaMetadataRetriever()
@@ -253,6 +257,7 @@ class TbchatMediaPickerPlugin : FlutterPlugin, MethodCallHandler, ActivityAware 
         channel.setMethodCallHandler(null)
     }
 
+    /** Activity 绑定后保存引用，用于 present 相册选择器 */
     override fun onAttachedToActivity(binding: ActivityPluginBinding) {
         activity = binding.activity
     }
