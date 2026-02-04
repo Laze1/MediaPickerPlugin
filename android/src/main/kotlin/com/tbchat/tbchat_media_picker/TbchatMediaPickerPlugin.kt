@@ -3,6 +3,7 @@ package com.tbchat.tbchat_media_picker
 import android.app.Activity
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.Color
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.util.Log
@@ -29,6 +30,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import top.zibin.luban.Luban
 import top.zibin.luban.OnNewCompressListener
+import androidx.core.graphics.toColorInt
 
 /** TbchatMediaPickerPlugin */
 class TbchatMediaPickerPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
@@ -78,13 +80,6 @@ class TbchatMediaPickerPlugin : FlutterPlugin, MethodCallHandler, ActivityAware 
                 if (maxSize == 0L) {
                     maxSize = 1024 * 1024 * 1024L // 1GB
                 }
-                val style = PictureSelectorStyle()
-                style.bottomBarStyle.apply {
-                    bottomNarBarHeight = 500
-                    bottomPreviewNormalText = "#07C160"
-                    isCompleteCountTips = false
-
-                }
 
                 PictureSelector.create(activity!!)
                     .openGallery(mediaType)
@@ -102,7 +97,6 @@ class TbchatMediaPickerPlugin : FlutterPlugin, MethodCallHandler, ActivityAware 
                     .isGif(true) // 是否显示gif文件
                     .isWebp(true) // 是否显示webp文件
                     .isBmp(true) // 是否显示bmp文件
-                    .setSelectorUIStyle(style) // 设置相册主题
                     // .setInjectLayoutResourceListener { context, layoutResId ->
                     //     when (layoutResId) {
                     //         // R.layout.picture_selector_layout ->

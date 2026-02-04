@@ -192,7 +192,7 @@ public class BottomNavBar extends RelativeLayout implements View.OnClickListener
             if (StyleUtils.checkStyleValidity(previewSelectTextColor)) {
                 tvPreview.setTextColor(previewSelectTextColor);
             } else {
-                tvPreview.setTextColor(ContextCompat.getColor(getContext(), R.color.ps_color_fa632d));
+                tvPreview.setTextColor(ContextCompat.getColor(getContext(), R.color.ps_color_wechat_green));
             }
             String previewSelectText = StyleUtils.checkStyleValidity(bottomBarStyle.getBottomPreviewSelectTextResId())
                     ? getContext().getString(bottomBarStyle.getBottomPreviewSelectTextResId()) : bottomBarStyle.getBottomPreviewSelectText();

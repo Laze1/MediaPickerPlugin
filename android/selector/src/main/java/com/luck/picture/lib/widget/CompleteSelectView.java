@@ -149,7 +149,7 @@ public class CompleteSelectView extends LinearLayout {
             if (StyleUtils.checkStyleValidity(selectTextColor)) {
                 tvComplete.setTextColor(selectTextColor);
             } else {
-                tvComplete.setTextColor(ContextCompat.getColor(getContext(), R.color.ps_color_fa632d));
+                tvComplete.setTextColor(ContextCompat.getColor(getContext(), R.color.ps_color_wechat_green));
             }
             if (selectorStyle.getBottomBarStyle().isCompleteCountTips()) {
                 if (tvSelectNum.getVisibility() == GONE || tvSelectNum.getVisibility() == INVISIBLE) {

@@ -65,12 +65,6 @@ dependencies {
     // 本地 PictureSelector 与压缩模块
     implementation project(':selector')
     implementation project(':compress')
-
-    // uCrop library (Not necessary)
-    // implementation 'io.github.lucksiege:ucrop:v3.11.2'
-
-    // simple camerax library (Not necessary)
-    // implementation 'io.github.lucksiege:camerax:v3.11.2'
     
     // Glide 图片加载库（PictureSelector 需要 ImageEngine 实现）
     implementation 'com.github.bumptech.glide:glide:4.15.1'
