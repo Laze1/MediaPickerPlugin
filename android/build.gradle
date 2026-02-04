@@ -1,6 +1,8 @@
 group = "com.tbchat.tbchat_media_picker"
 version = "1.0-SNAPSHOT"
 
+apply from: "config.gradle"
+
 buildscript {
     ext.kotlin_version = "2.1.0"
     repositories {
@@ -29,6 +31,10 @@ android {
 
     compileSdk = 36
 
+    buildFeatures {
+        buildConfig = true
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
@@ -45,7 +51,7 @@ android {
 
     defaultConfig {
         minSdk = 24
-
+        buildConfigField "String", "LIBRARY_PACKAGE_NAME", "\"com.luck.picture.lib\""
     }
 
     testOptions {
@@ -62,14 +68,19 @@ android {
 }
 
 dependencies {
-    // 本地 PictureSelector 与压缩模块
-    implementation project(':selector')
-    implementation project(':compress')
-    
     // Glide 图片加载库（PictureSelector 需要 ImageEngine 实现）
     implementation 'com.github.bumptech.glide:glide:4.15.1'
     
     // 测试依赖
     testImplementation("org.jetbrains.kotlin:kotlin-test")
     testImplementation("org.mockito:mockito-core:5.0.0")
+    
+    // Selector 依赖
+    implementation "androidx.appcompat:appcompat:${cfgs.version_appcompat}"
+    implementation "androidx.recyclerview:recyclerview:${cfgs.version_recyclerview}"
+    implementation "androidx.activity:activity:${cfgs.activity_version}"
+    implementation "androidx.fragment:fragment:${cfgs.fragment_version}"
+    implementation "androidx.exifinterface:exifinterface:${cfgs.exifinterface_version}"
+    implementation "androidx.viewpager2:viewpager2:${cfgs.viewpage2}"
+    implementation "androidx.constraintlayout:constraintlayout:${cfgs.constraintlayout}"
 }

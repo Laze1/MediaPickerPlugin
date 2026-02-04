@@ -24,7 +24,3 @@ plugins {
 }
 
 include(":app")
-include(":selector")
-include(":compress")
-project(":selector").projectDir = file("../../android/selector")
-project(":compress").projectDir = file("../../android/compress")
