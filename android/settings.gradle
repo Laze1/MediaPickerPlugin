@@ -1,1 +1,3 @@
 rootProject.name = 'tbchat_media_picker'
+include ':selector'
+include ':compress'

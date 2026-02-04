@@ -62,10 +62,9 @@ android {
 }
 
 dependencies {
-    // PictureSelector 库
-    implementation 'io.github.lucksiege:pictureselector:v3.11.2'
-    // image compress library (Not necessary)
-    implementation 'io.github.lucksiege:compress:v3.11.2'
+    // 本地 PictureSelector 与压缩模块
+    implementation project(':selector')
+    implementation project(':compress')
 
     // uCrop library (Not necessary)
     // implementation 'io.github.lucksiege:ucrop:v3.11.2'
