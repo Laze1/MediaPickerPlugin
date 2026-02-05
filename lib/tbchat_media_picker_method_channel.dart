@@ -13,12 +13,6 @@ class MethodChannelTbchatMediaPicker extends TbchatMediaPickerPlatform {
   final methodChannel = const MethodChannel('tbchat_media_picker');
 
   @override
-  Future<String?> getPlatformVersion() async {
-    final version = await methodChannel.invokeMethod<String>('getPlatformVersion');
-    return version;
-  }
-
-  @override
   Future<List<MediaEntity>> pickMedia({
     int mimeType = 0,
     int maxSelectNum = 1,

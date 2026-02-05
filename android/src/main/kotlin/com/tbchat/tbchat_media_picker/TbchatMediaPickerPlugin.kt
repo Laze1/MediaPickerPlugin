@@ -3,7 +3,6 @@ package com.tbchat.tbchat_media_picker
 import android.app.Activity
 import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.Color
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.util.Log
@@ -13,7 +12,6 @@ import com.luck.picture.lib.config.SelectModeConfig
 import com.luck.picture.lib.engine.CompressFileEngine
 import com.luck.picture.lib.entity.LocalMedia
 import com.luck.picture.lib.interfaces.OnResultCallbackListener
-import com.luck.picture.lib.style.PictureSelectorStyle
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.embedding.engine.plugins.activity.ActivityAware
 import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding
@@ -35,8 +33,7 @@ import top.zibin.luban.OnNewCompressListener
  * Flutter 媒体选择插件（Android 端）.
  *
  * 通过 MethodChannel "tbchat_media_picker" 与 Flutter 通信，使用本地 PictureSelector 打开相册，
- * 支持图片/视频选择、压缩（Luban）、视频首帧缩略图，并将结果序列化为 JSON 数组回传，
- * 与 [MediaEntity] 字段一一对应。
+ * 支持图片/视频选择、压缩（Luban）、视频首帧缩略图，并将结果序列化为 JSON 数组回传， 与 [MediaEntity] 字段一一对应。
  */
 class TbchatMediaPickerPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
 
@@ -47,8 +44,7 @@ class TbchatMediaPickerPlugin : FlutterPlugin, MethodCallHandler, ActivityAware 
     private var activity: Activity? = null
 
     /** pickMedia 的异步回调，在用户完成选择或取消后调用一次并置空，避免重复回调 */
-    @Suppress("UNCHECKED_CAST")
-    private var pendingResult: Result? = null
+    @Suppress("UNCHECKED_CAST") private var pendingResult: Result? = null
 
     override fun onAttachedToEngine(flutterPluginBinding: FlutterPlugin.FlutterPluginBinding) {
         channel = MethodChannel(flutterPluginBinding.binaryMessenger, "tbchat_media_picker")
@@ -60,7 +56,7 @@ class TbchatMediaPickerPlugin : FlutterPlugin, MethodCallHandler, ActivityAware 
      * - pickMedia: 打开相册选择图片/视频，参数 mimeType/maxSelectNum/maxSize，结果通过 pendingResult 回传 JSON 数组或错误.
      */
     override fun onMethodCall(call: MethodCall, result: Result) {
-         if (call.method == "pickMedia") {
+        if (call.method == "pickMedia") {
             if (activity == null) {
                 result.error("NO_ACTIVITY", "Activity is not available", null)
                 return
@@ -76,90 +72,90 @@ class TbchatMediaPickerPlugin : FlutterPlugin, MethodCallHandler, ActivityAware 
 
             try {
                 val mediaType =
-                    when (mimeType) {
-                        1 -> SelectMimeType.TYPE_IMAGE
-                        2 -> SelectMimeType.TYPE_VIDEO
-                        else -> SelectMimeType.TYPE_ALL
-                    }
+                        when (mimeType) {
+                            1 -> SelectMimeType.TYPE_IMAGE
+                            2 -> SelectMimeType.TYPE_VIDEO
+                            else -> SelectMimeType.TYPE_ALL
+                        }
                 val selectionMode =
-                    if (maxSelectNum > 1) SelectModeConfig.MULTIPLE else SelectModeConfig.SINGLE
+                        if (maxSelectNum > 1) SelectModeConfig.MULTIPLE else SelectModeConfig.SINGLE
 
                 if (maxSize == 0L) {
                     maxSize = 1024 * 1024 * 1024L // 0 表示不限制，此处按 1GB 处理
                 }
 
                 PictureSelector.create(activity!!)
-                    .openGallery(mediaType)
-                    .setSelectionMode(selectionMode)
-                    .setImageEngine(GlideEngine.createGlideEngine())
-                    // .setLanguage() //设置相册语言
-                    .setMaxSelectNum(maxSelectNum) // 设置图片最大选择数量
-                    .setMaxVideoSelectNum(maxSelectNum) // 设置视频最大选择数量
-                    .isWithSelectVideoImage(true) // 支持图片视频同选
-                    .isOriginalControl(true) // 原图选项
-                    .isDisplayCamera(false) // 不显示相机
-                    .setSelectMaxFileSize(maxSize) // 设置最大选择大小
-                    .isPageStrategy(true, 40) // 分页模式，每页10条
-                    .isFilterSizeDuration(true) // 过滤视频小于1秒和文件小于1kb
-                    .isGif(true) // 是否显示gif文件
-                    .isWebp(true) // 是否显示webp文件
-                    .isBmp(true) // 是否显示bmp文件
-                    .setVideoThumbnailListener { context, videoPath, thumbnailCallback ->
-                        thumbnailCallback?.onCallback(
-                            videoPath,
-                            getVideoThumbnail(context!!, videoPath!!)
+                        .openGallery(mediaType)
+                        .setSelectionMode(selectionMode)
+                        .setImageEngine(GlideEngine.createGlideEngine())
+                        // .setLanguage() //设置相册语言
+                        .setMaxSelectNum(maxSelectNum) // 设置图片最大选择数量
+                        .setMaxVideoSelectNum(maxSelectNum) // 设置视频最大选择数量
+                        .isWithSelectVideoImage(true) // 支持图片视频同选
+                        .isOriginalControl(true) // 原图选项
+                        .isDisplayCamera(false) // 不显示相机
+                        .setSelectMaxFileSize(maxSize) // 设置最大选择大小
+                        .isPageStrategy(true, 40) // 分页模式，每页10条
+                        .isFilterSizeDuration(true) // 过滤视频小于1秒和文件小于1kb
+                        .isGif(true) // 是否显示gif文件
+                        .isWebp(true) // 是否显示webp文件
+                        .isBmp(true) // 是否显示bmp文件
+                        .setVideoThumbnailListener { context, videoPath, thumbnailCallback ->
+                            thumbnailCallback?.onCallback(
+                                    videoPath,
+                                    getVideoThumbnail(context!!, videoPath!!)
+                            )
+                        }
+                        .setCompressEngine(
+                                CompressFileEngine { context, source, compressCallback ->
+                                    Luban.with(context)
+                                            .load(source)
+                                            .setTargetDir(context.cacheDir.path)
+                                            .setCompressListener(
+                                                    object : OnNewCompressListener {
+                                                        override fun onStart() {}
+                                                        override fun onSuccess(
+                                                                source: String?,
+                                                                compressFile: File?
+                                                        ) {
+                                                            compressCallback?.onCallback(
+                                                                    source,
+                                                                    compressFile?.absolutePath
+                                                            )
+                                                        }
+
+                                                        override fun onError(
+                                                                source: String?,
+                                                                e: Throwable?
+                                                        ) {
+                                                            compressCallback?.onCallback(
+                                                                    source,
+                                                                    null
+                                                            )
+                                                        }
+                                                    }
+                                            )
+                                            .launch()
+                                }
                         )
-                    }
-                    .setCompressEngine(
-                        CompressFileEngine { context, source, compressCallback ->
-                            Luban.with(context)
-                                .load(source)
-                                .setTargetDir(context.cacheDir.path)
-                                .setCompressListener(
-                                    object : OnNewCompressListener {
-                                        override fun onStart() {}
-                                        override fun onSuccess(
-                                            source: String?,
-                                            compressFile: File?
-                                        ) {
-                                            compressCallback?.onCallback(
-                                                source,
-                                                compressFile?.absolutePath
-                                            )
-                                        }
-
-                                        override fun onError(
-                                            source: String?,
-                                            e: Throwable?
-                                        ) {
-                                            compressCallback?.onCallback(
-                                                source,
-                                                null
-                                            )
-                                        }
+                        .forResult(
+                                object : OnResultCallbackListener<LocalMedia> {
+                                    override fun onResult(result: ArrayList<LocalMedia>) {
+                                        Log.d("TbchatMediaPickerPlugin", "onResult: $result")
+                                        handleSelectionResult(result)
                                     }
-                                )
-                                .launch()
-                        }
-                    )
-                    .forResult(
-                        object : OnResultCallbackListener<LocalMedia> {
-                            override fun onResult(result: ArrayList<LocalMedia>) {
-                                Log.d("TbchatMediaPickerPlugin", "onResult: $result")
-                                handleSelectionResult(result)
-                            }
 
-                            override fun onCancel() {
-                                pendingResult?.success(JSONArray().toString())
-                                pendingResult = null
-                            }
-                        }
-                    )
+                                    override fun onCancel() {
+                                        pendingResult?.success(JSONArray().toString())
+                                        pendingResult = null
+                                    }
+                                }
+                        )
             } catch (e: Exception) {
                 pendingResult?.error(
-                    "PICK_ERROR",
-                    "Failed to open media picker: ${e.message}",
-                    null
+                        "PICK_ERROR",
+                        "Failed to open media picker: ${e.message}",
+                        null
                 )
                 pendingResult = null
             }
@@ -169,8 +165,8 @@ class TbchatMediaPickerPlugin : FlutterPlugin, MethodCallHandler, ActivityAware 
     }
 
     /**
-     * 将 PictureSelector 返回的 [LocalMedia] 列表转成 JSON 数组字符串并回传 Flutter.
-     * 字段与 Dart 端 MediaEntity.fromMap 一致，便于双端统一解析.
+     * 将 PictureSelector 返回的 [LocalMedia] 列表转成 JSON 数组字符串并回传 Flutter. 字段与 Dart 端 MediaEntity.fromMap
+     * 一致，便于双端统一解析.
      */
     private fun handleSelectionResult(result: ArrayList<LocalMedia>) {
         try {
@@ -229,9 +225,8 @@ class TbchatMediaPickerPlugin : FlutterPlugin, MethodCallHandler, ActivityAware 
     }
 
     /**
-     * 取视频首帧作为缩略图，写入 cache 目录并返回本地路径.
-     * 若 [videoPath] 为 content:// 则使用 [Context] 重载的 setDataSource，避免 setDataSource(String) 报错.
-     * 失败时返回空字符串，由 PictureSelector 使用默认处理.
+     * 取视频首帧作为缩略图，写入 cache 目录并返回本地路径. 若 [videoPath] 为 content:// 则使用 [Context] 重载的 setDataSource，避免
+     * setDataSource(String) 报错. 失败时返回空字符串，由 PictureSelector 使用默认处理.
      */
     private fun getVideoThumbnail(context: Context, videoPath: String): String {
         return try {

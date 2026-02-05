@@ -6,9 +6,6 @@ class MediaEntity {
   /// 文件路径(真实路径)
   final String path;
   
-  /// 原始路径
-  final String originalPath;
-  
   /// 压缩后的路径
   final String compressPath;
   
@@ -72,7 +69,6 @@ class MediaEntity {
     required this.duration,
     required this.size,
     required this.fileName,
-    this.originalPath = '',
     this.compressPath = '',
     this.cutPath = '',
     this.watermarkPath = '',
@@ -96,7 +92,6 @@ class MediaEntity {
     return MediaEntity(
       id: map['id'] as int? ?? 0,
       path: map['path'] as String? ?? '',
-      originalPath: map['originalPath'] as String? ?? '',
       compressPath: map['compressPath'] as String? ?? '',
       cutPath: map['cutPath'] as String? ?? '',
       watermarkPath: map['watermarkPath'] as String? ?? '',
@@ -124,7 +119,6 @@ class MediaEntity {
     return {
       'id': id,
       'path': path,
-      'originalPath': originalPath,
       'compressPath': compressPath,
       'cutPath': cutPath,
       'watermarkPath': watermarkPath,
@@ -152,6 +146,14 @@ class MediaEntity {
 
   /// 是否为视频
   bool get isVideo => mimeType.startsWith('video/');
+
+  /// 获取原图需求路径
+  String getOriginalPath(){
+    if(isImage && !isOriginal){
+      return compressPath;
+    }
+    return path;
+  }
 
   @override
   String toString() {
