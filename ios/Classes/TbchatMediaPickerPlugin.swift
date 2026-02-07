@@ -2,6 +2,9 @@ import Flutter
 import UIKit
 
 public class TbchatMediaPickerPlugin: NSObject, FlutterPlugin {
+  /// 强引用桥接对象，避免被 ARC 释放导致选择器不弹出
+  private var bridge: HXPhotoPickerBridge?
+
   public static func register(with registrar: FlutterPluginRegistrar) {
     let channel = FlutterMethodChannel(name: "tbchat_media_picker", binaryMessenger: registrar.messenger())
     let instance = TbchatMediaPickerPlugin()
@@ -15,8 +18,10 @@ public class TbchatMediaPickerPlugin: NSObject, FlutterPlugin {
       let mimeType = args?["mimeType"] as? Int ?? 0
       let maxSelectNum = args?["maxSelectNum"] as? Int ?? 1
       let maxSize = args?["maxSize"] as? Int ?? 0
-      let bridge = HXPhotoPickerBridge()
-      bridge.pickMedia(mimeType: mimeType, maxSelectNum: maxSelectNum, maxSize: maxSize, result: result)
+      if bridge == nil {
+        bridge = HXPhotoPickerBridge()
+      }
+      bridge?.pickMedia(mimeType: mimeType, maxSelectNum: maxSelectNum, maxSize: maxSize, result: result)
     default:
       result(FlutterMethodNotImplemented)
     }

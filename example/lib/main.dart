@@ -232,8 +232,6 @@ class _MyAppState extends State<MyApp> {
                                 // 路径信息
                                 if (media.path.isNotEmpty)
                                   _buildInfoRow('路径', media.path),
-                                if (media.originalPath.isNotEmpty && media.originalPath != media.path)
-                                  _buildInfoRow('原始路径', media.originalPath),
                                 if (media.cutPath.isNotEmpty)
                                   _buildInfoRow('裁剪路径', media.cutPath),
                                 if (media.compressPath.isNotEmpty) ...[
