@@ -3,6 +3,11 @@
 // 将 HXPhotoPicker 与 Flutter 桥接：弹出相册选择器，将用户选中的图片/视频导出为本地文件，
 // 并组装成与 Android PictureSelector 一致的 JSON 结构，通过 Method Channel 返回给 Flutter。
 // 字段与 MediaEntity.fromMap 一一对应，保证双端数据结构统一。
+//
+// 图片处理规则（仅图片，视频不处理）：
+// - 未选原图：对图片进行压缩（JPEG 质量 0.6，长边最大 1280），path=原图路径，compressPath=压缩图路径，compressed=true。
+// - 选原图且分辨率 > 1000 万像素：缩小到 ≤1000 万像素后写入临时文件，path=缩小后路径，compressPath=""，compressed=false。
+// - 选原图且分辨率 ≤ 1000 万：不处理，path=导出路径，compressPath=""，compressed=false。
 
 import Flutter
 import UIKit
@@ -26,12 +31,13 @@ final class HXPhotoPickerBridge: NSObject {
     ///   - mimeType: 0=图片+视频，1=仅图片，2=仅视频。
     ///   - maxSelectNum: 最大可选数量。
     ///   - maxSize: 最大文件大小（字节），0 表示不限制。
+    ///   - gridCount: 选择器每排（每行）显示数量，默认 4。
     ///   - result: Flutter 回调，成功时传入 JSON 数组字符串，取消传 "[]"，失败传 FlutterError。
     /// Flutter 入口方法：确保在主线程展示系统 UI。
     /// HXPhotoPicker 依赖 UIKit，必须在主线程调用。
-    func pickMedia(mimeType: Int, maxSelectNum: Int, maxSize: Int, result: @escaping FlutterResult) {
+    func pickMedia(mimeType: Int, maxSelectNum: Int, maxSize: Int, gridCount: Int, result: @escaping FlutterResult) {
         DispatchQueue.main.async { [weak self] in
-            self?.performPick(mimeType: mimeType, maxSelectNum: maxSelectNum, maxSize: maxSize, result: result)
+            self?.performPick(mimeType: mimeType, maxSelectNum: maxSelectNum, maxSize: maxSize, gridCount: gridCount, result: result)
         }
     }
 
@@ -40,7 +46,7 @@ final class HXPhotoPickerBridge: NSObject {
     /// 1) 兜底参数与并发保护
     /// 2) 组装 HXPhotoPicker 配置
     /// 3) 绑定完成/取消回调
-    private func performPick(mimeType: Int, maxSelectNum: Int, maxSize: Int, result: @escaping FlutterResult) {
+    private func performPick(mimeType: Int, maxSelectNum: Int, maxSize: Int, gridCount: Int, result: @escaping FlutterResult) {
         if flutterResult != nil {
             result(FlutterError(code: "PICK_IN_PROGRESS", message: "Another pickMedia call is in progress", details: nil))
             return
@@ -59,6 +65,14 @@ final class HXPhotoPickerBridge: NSObject {
         config.maximumSelectedPhotoCount = maxSelectNum
         config.maximumSelectedVideoCount = maxSelectNum
         config.allowSelectedTogether = (mimeType == 0)
+
+        // 每排显示数量：photoList.rowNumber 为每行个数，限制在 2~8 之间
+        let count = min(8, max(2, gridCount))
+        config.photoList.rowNumber = count
+        config.photoList.landscapeRowNumber = max(count, 7) // 横屏可略多
+
+        // 相册内不展示拍照按钮（仅从相册选择）
+        config.photoList.allowAddCamera = false
 
         // 弹出选择器：成功回调走资源导出/组装，取消回调直接返回空数组
         Photo.picker(config) { [weak self] result, pickerController in
@@ -106,19 +120,59 @@ final class HXPhotoPickerBridge: NSObject {
                 }
 
                 let url = assetURLResult.url
-                let path = url.path
                 let size = self.fileSize(at: url)
                 // 过滤掉超过 maxSize 的资源
                 if self.maxSizeBytes > 0 && size > self.maxSizeBytes {
                     return
                 }
 
-                // 组装与 Android 端一致的字段
+                if mediaType == .photo {
+                    // 图片：按是否原图做压缩或降分辨率
+                    let isOriginal = result.isOriginal
+                    guard let processed = self.processPhotoImage(sourceURL: url, isOriginal: isOriginal) else {
+                        return
+                    }
+                    let mimeType = self.mimeType(for: URL(fileURLWithPath: processed.deliveryPath), mediaType: mediaType)
+                    let fileName = (processed.deliveryPath as NSString).lastPathComponent
+                    // path：与 Android 一致，非原图时为原图路径，原图>10MP 时为缩小后路径；sandboxPath 为实际使用的文件路径
+                    let map: [String: Any] = [
+                        "id": index + 1,
+                        "path": processed.pathField,
+                        "compressPath": processed.compressPath,
+                        "cutPath": "",
+                        "watermarkPath": "",
+                        "videoThumbnailPath": "",
+                        "sandboxPath": processed.deliveryPath,
+                        "duration": 0,
+                        "isCut": false,
+                        "mimeType": mimeType,
+                        "compressed": processed.compressed,
+                        "width": processed.width,
+                        "height": processed.height,
+                        "cropImageWidth": 0,
+                        "cropImageHeight": 0,
+                        "cropOffsetX": 0,
+                        "cropOffsetY": 0,
+                        "cropResultAspectRatio": 0.0,
+                        "size": processed.size,
+                        "isOriginal": isOriginal,
+                        "fileName": fileName
+                    ]
+                    syncQueue.async {
+                        if index < items.count {
+                            items[index] = map
+                        }
+                    }
+                    return
+                }
+
+                // 视频：不做压缩/降分辨率，仅导出路径与缩略图
+                let path = url.path
                 let mimeType = self.mimeType(for: url, mediaType: mediaType)
                 let fileName = url.lastPathComponent
                 let (width, height) = self.mediaDimensions(for: url, mediaType: mediaType)
-                let duration = mediaType == .video ? self.videoDuration(for: url) : 0
-                let videoThumbPath = mediaType == .video ? (self.createVideoThumbnail(for: url) ?? "") : ""
+                let duration = self.videoDuration(for: url)
+                let videoThumbPath = self.createVideoThumbnail(for: url) ?? ""
 
                 let map: [String: Any] = [
                     "id": index + 1,
@@ -140,7 +194,7 @@ final class HXPhotoPickerBridge: NSObject {
                     "cropOffsetY": 0,
                     "cropResultAspectRatio": 0.0,
                     "size": size,
-                    "isOriginal": isOriginal,
+                    "isOriginal": result.isOriginal,
                     "fileName": fileName
                 ]
 
@@ -295,4 +349,147 @@ final class HXPhotoPickerBridge: NSObject {
         }
     }
 
+    // MARK: - 图片处理（与 Android Luban Engine.computeSize 逻辑一致）
+
+    private static let maxPixelsOriginal: Int = 10_000_000  // 1000 万像素
+    private static let compressQuality: CGFloat = 0.6       // 与 Luban JPEG 质量 60 一致
+
+    /// 与 Luban Engine.computeSize() 一致的采样倍数：1=不缩小，2=宽高各减半，4=1/4，或按 1280 基准
+    private func computeSampleSize(srcW: Int, srcH: Int) -> Int {
+        let w = srcW % 2 == 1 ? srcW + 1 : srcW
+        let h = srcH % 2 == 1 ? srcH + 1 : srcH
+        let longSide = max(w, h)
+        let shortSide = min(w, h)
+        let scale = CGFloat(shortSide) / CGFloat(longSide)
+
+        if scale <= 1 && scale > 0.5625 {
+            if longSide < 1664 { return 1 }
+            if longSide < 4990 { return 2 }
+            if longSide > 4990 && longSide < 10240 { return 4 }
+            return longSide / 1280
+        } else if scale <= 0.5625 && scale > 0.5 {
+            let n = longSide / 1280
+            return n == 0 ? 1 : n
+        } else {
+            return Int(ceil(CGFloat(longSide) / (1280.0 / scale)))
+        }
+    }
+
+    private struct ProcessedPhoto {
+        /// 与 Android 一致：非原图时为原图路径，原图且>10MP 时为缩小后路径，否则为原图路径
+        var pathField: String
+        /// 实际使用的文件路径（压缩图或缩小图或原图）
+        var deliveryPath: String
+        /// 压缩图路径，仅当未选原图时有值
+        var compressPath: String
+        var width: Int
+        var height: Int
+        var size: Int
+        var compressed: Bool
+    }
+
+    /// 根据是否原图对图片做压缩或降分辨率，写入临时文件并返回路径与尺寸信息。
+    private func processPhotoImage(sourceURL: URL, isOriginal: Bool) -> ProcessedPhoto? {
+        guard let image = UIImage(contentsOfFile: sourceURL.path) else { return nil }
+        let srcW = Int(image.size.width * image.scale)
+        let srcH = Int(image.size.height * image.scale)
+        let pixelCount = srcW * srcH
+        let originalPath = sourceURL.path
+
+        if !isOriginal {
+            // 未选原图：先复制原图到持久位置（path 返回原图路径），再压缩（compressPath 返回压缩路径）
+            let ext = sourceURL.pathExtension.isEmpty ? "jpg" : sourceURL.pathExtension
+            let originalFileName = "hx_original_\(UUID().uuidString).\(ext)"
+            let originalFileURL = FileManager.default.temporaryDirectory.appendingPathComponent(originalFileName)
+            let pathForOriginal: String
+            do {
+                try FileManager.default.copyItem(at: sourceURL, to: originalFileURL)
+                pathForOriginal = originalFileURL.path
+            } catch {
+                pathForOriginal = originalPath
+            }
+
+            // 使用与 Luban 一致的 computeSampleSize 逻辑压缩
+            let sampleSize = computeSampleSize(srcW: srcW, srcH: srcH)
+            let newW = max(1, srcW / sampleSize)
+            let newH = max(1, srcH / sampleSize)
+            let imageToCompress: UIImage
+            if sampleSize > 1, let resized = resizeImage(image, targetWidth: newW, targetHeight: newH) {
+                imageToCompress = resized
+            } else {
+                imageToCompress = image
+            }
+            guard let data = imageToCompress.jpegData(compressionQuality: Self.compressQuality) else {
+                return ProcessedPhoto(pathField: pathForOriginal, deliveryPath: pathForOriginal, compressPath: "", width: srcW, height: srcH, size: fileSize(at: sourceURL), compressed: false)
+            }
+            let compressFileName = "hx_compressed_\(UUID().uuidString).jpg"
+            let compressFileURL = FileManager.default.temporaryDirectory.appendingPathComponent(compressFileName)
+            do {
+                try data.write(to: compressFileURL, options: .atomic)
+                let size = fileSize(at: compressFileURL)
+                let w = Int(imageToCompress.size.width * imageToCompress.scale)
+                let h = Int(imageToCompress.size.height * imageToCompress.scale)
+                return ProcessedPhoto(
+                    pathField: pathForOriginal,
+                    deliveryPath: compressFileURL.path,
+                    compressPath: compressFileURL.path,
+                    width: w,
+                    height: h,
+                    size: size,
+                    compressed: true
+                )
+            } catch {
+                return ProcessedPhoto(pathField: pathForOriginal, deliveryPath: pathForOriginal, compressPath: "", width: srcW, height: srcH, size: fileSize(at: sourceURL), compressed: false)
+            }
+        }
+
+        if pixelCount <= Self.maxPixelsOriginal {
+            // 选原图且 ≤1000 万像素：不处理
+            return ProcessedPhoto(
+                pathField: originalPath,
+                deliveryPath: originalPath,
+                compressPath: "",
+                width: srcW,
+                height: srcH,
+                size: fileSize(at: sourceURL),
+                compressed: false
+            )
+        }
+
+        // 选原图且 >1000 万像素：缩小到 ≤1000 万像素
+        let scale = sqrt(CGFloat(Self.maxPixelsOriginal) / CGFloat(pixelCount))
+        let newW = max(1, Int(CGFloat(srcW) * scale))
+        let newH = max(1, Int(CGFloat(srcH) * scale))
+        guard let resized = resizeImage(image, targetWidth: newW, targetHeight: newH),
+              let data = resized.jpegData(compressionQuality: 0.9) else {
+            return ProcessedPhoto(pathField: originalPath, deliveryPath: originalPath, compressPath: "", width: srcW, height: srcH, size: fileSize(at: sourceURL), compressed: false)
+        }
+        let fileName = "hx_resized_\(UUID().uuidString).jpg"
+        let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent(fileName)
+        do {
+            try data.write(to: fileURL, options: .atomic)
+            let size = fileSize(at: fileURL)
+            return ProcessedPhoto(
+                pathField: fileURL.path,
+                deliveryPath: fileURL.path,
+                compressPath: "",
+                width: newW,
+                height: newH,
+                size: size,
+                compressed: false
+            )
+        } catch {
+            return ProcessedPhoto(pathField: originalPath, deliveryPath: originalPath, compressPath: "", width: srcW, height: srcH, size: fileSize(at: sourceURL), compressed: false)
+        }
+    }
+
+    private func resizeImage(_ image: UIImage, targetWidth: Int, targetHeight: Int) -> UIImage? {
+        let width = targetWidth
+        let height = targetHeight
+        let size = CGSize(width: width, height: height)
+        UIGraphicsBeginImageContextWithOptions(size, false, 1)
+        defer { UIGraphicsEndImageContext() }
+        image.draw(in: CGRect(origin: .zero, size: size))
+        return UIGraphicsGetImageFromCurrentImageContext()
+    }
 }

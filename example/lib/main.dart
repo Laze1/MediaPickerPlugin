@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:image/image.dart' as img;
 import 'package:tbchat_media_picker/tbchat_media_picker.dart';
 
 void main() {
@@ -31,6 +32,7 @@ class _MyAppState extends State<MyApp> {
       final results = await TbchatMediaPicker.pickMedia(
         mimeType: mimeType,
         maxSelectNum: maxSelectNum,
+        gridCount: 3,
       );
 
       setState(() {
@@ -90,6 +92,21 @@ class _MyAppState extends State<MyApp> {
       debugPrint('获取文件大小失败: $e');
     }
     return 0;
+  }
+
+  /// 获取图片文件的宽高，返回 "宽 × 高"；失败或非图片返回空字符串
+  Future<String> _getImageDimensions(String filePath) async {
+    try {
+      final file = File(filePath);
+      if (!await file.exists()) return '';
+      final bytes = await file.readAsBytes();
+      final image = img.decodeImage(bytes);
+      if (image == null) return '';
+      return '${image.width} × ${image.height}';
+    } catch (e) {
+      debugPrint('获取图片尺寸失败: $e');
+      return '';
+    }
   }
 
   @override
@@ -184,6 +201,9 @@ class _MyAppState extends State<MyApp> {
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
+                                // 预览区：放在 id 上方，展示图片/视频及压缩缩略图（如有）
+                                _buildMediaPreview(media),
+                                const SizedBox(height: 12),
                                 Row(
                                   children: [
                                     Icon(
@@ -243,6 +263,18 @@ class _MyAppState extends State<MyApp> {
                                         return _buildInfoRow('压缩后大小', '加载中...');
                                       } else if (snapshot.hasData && snapshot.data! > 0) {
                                         return _buildInfoRow('压缩后大小', _formatFileSize(snapshot.data!));
+                                      } else {
+                                        return const SizedBox.shrink();
+                                      }
+                                    },
+                                  ),
+                                  FutureBuilder<String>(
+                                    future: _getImageDimensions(media.compressPath),
+                                    builder: (context, snapshot) {
+                                      if (snapshot.connectionState == ConnectionState.waiting) {
+                                        return _buildInfoRow('压缩后尺寸', '加载中...');
+                                      } else if (snapshot.hasData && snapshot.data!.isNotEmpty) {
+                                        return _buildInfoRow('压缩后尺寸', snapshot.data!);
                                       } else {
                                         return const SizedBox.shrink();
                                       }
@@ -308,5 +340,95 @@ class _MyAppState extends State<MyApp> {
         ],
       ),
     );
+  }
+
+  /// 在 id 上方展示选择的图片/视频；若有压缩图则一并展示
+  Widget _buildMediaPreview(MediaEntity media) {
+    const double previewHeight = 120;
+    const double spacing = 8;
+
+    Widget thumbnail(String path, String label) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(8),
+        child: SizedBox(
+          width: previewHeight,
+          height: previewHeight,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              Image.file(
+                File(path),
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => Container(
+                  color: Colors.grey.shade200,
+                  child: const Center(
+                    child: Icon(Icons.broken_image, size: 32, color: Colors.grey),
+                  ),
+                ),
+              ),
+              if (label.isNotEmpty)
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(vertical: 4),
+                    color: Colors.black54,
+                    child: Text(
+                      label,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(color: Colors.white, fontSize: 12),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    if (media.isImage) {
+      final hasCompress = media.compressPath.isNotEmpty && media.compressPath != media.path;
+      if (hasCompress) {
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            thumbnail(media.path, '原图'),
+            const SizedBox(width: spacing),
+            thumbnail(media.compressPath, '压缩'),
+          ],
+        );
+      }
+      final displayPath = media.sandboxPath.isNotEmpty ? media.sandboxPath : media.path;
+      if (displayPath.isEmpty) return const SizedBox.shrink();
+      return thumbnail(displayPath, '');
+    }
+
+    if (media.isVideo) {
+      if (media.videoThumbnailPath.isNotEmpty) {
+        return thumbnail(media.videoThumbnailPath, '视频缩略图');
+      }
+      return SizedBox(
+        height: previewHeight,
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(8),
+          child: Container(
+            color: Colors.grey.shade200,
+            child: const Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.videocam, size: 48, color: Colors.grey),
+                  SizedBox(height: 4),
+                  Text('视频', style: TextStyle(color: Colors.grey)),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return const SizedBox.shrink();
   }
 }

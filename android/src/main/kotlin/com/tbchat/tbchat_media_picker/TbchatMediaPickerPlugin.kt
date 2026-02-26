@@ -34,6 +34,12 @@ import top.zibin.luban.OnNewCompressListener
  *
  * 通过 MethodChannel "tbchat_media_picker" 与 Flutter 通信，使用本地 PictureSelector 打开相册，
  * 支持图片/视频选择、压缩（Luban）、视频首帧缩略图，并将结果序列化为 JSON 数组回传， 与 [MediaEntity] 字段一一对应。
+ *
+ * 不点原图时的行为：
+ * - 会走 setCompressEngine 注入的 Luban 压缩（仅对图片）。
+ * - Luban：根据原图尺寸计算 inSampleSize 做采样（长边≥1664 时可能缩小 2/4 倍或按 1280 为基准），
+ *   再以 JPEG 质量 60 压缩写入 cache 目录。
+ * - 返回：path 为原图路径，compressPath 为压缩后路径；compressed=true；分辨率可能降低，质量 60。
  */
 class TbchatMediaPickerPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
 
@@ -69,6 +75,7 @@ class TbchatMediaPickerPlugin : FlutterPlugin, MethodCallHandler, ActivityAware 
             val mimeType = args["mimeType"] as? Int ?: 0 // 0: 全部(图+视频), 1: 仅图片, 2: 仅视频
             val maxSelectNum = args["maxSelectNum"] as? Int ?: 1
             var maxSize = args["maxSize"] as? Long ?: 0L
+            val gridCount = args["gridCount"] as? Int ?: 4 // 每排显示数量，默认 4
 
             try {
                 val mediaType =
@@ -89,6 +96,7 @@ class TbchatMediaPickerPlugin : FlutterPlugin, MethodCallHandler, ActivityAware 
                         .setSelectionMode(selectionMode)
                         .setImageEngine(GlideEngine.createGlideEngine())
                         // .setLanguage() //设置相册语言
+                        .setImageSpanCount(if (gridCount > 0) gridCount else 4) // 每排显示数量
                         .setMaxSelectNum(maxSelectNum) // 设置图片最大选择数量
                         .setMaxVideoSelectNum(maxSelectNum) // 设置视频最大选择数量
                         .isWithSelectVideoImage(true) // 支持图片视频同选
