@@ -18,6 +18,7 @@ class MyApp extends StatefulWidget {
 class _MyAppState extends State<MyApp> {
   List<MediaEntity> _selectedMedia = [];
   bool _isLoading = false;
+  final GlobalKey<ScaffoldMessengerState> _scaffoldKey = GlobalKey<ScaffoldMessengerState>();
 
   Future<void> _pickMedia({
     int mimeType = 0,
@@ -46,7 +47,7 @@ class _MyAppState extends State<MyApp> {
       });
       if (mounted) {
         debugPrint('选择失败: ${e.message}');
-        ScaffoldMessenger.of(context).showSnackBar(
+        _scaffoldKey.currentState?.showSnackBar(
           SnackBar(content: Text('选择失败: ${e.message}')),
         );
       }
@@ -56,7 +57,7 @@ class _MyAppState extends State<MyApp> {
       });
       if (mounted) {
         debugPrint('发生错误: ${e.toString()}');
-        ScaffoldMessenger.of(context).showSnackBar(
+        _scaffoldKey.currentState?.showSnackBar(
           SnackBar(content: Text('发生错误: $e')),
         );
       }
@@ -85,6 +86,7 @@ class _MyAppState extends State<MyApp> {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      scaffoldMessengerKey: _scaffoldKey,
       home: Scaffold(
         appBar: AppBar(
           title: const Text('媒体选择器示例'),

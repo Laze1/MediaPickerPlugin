@@ -4,6 +4,8 @@ import android.app.Activity
 import android.app.Dialog
 import android.content.Context
 import android.graphics.Color
+import android.os.Handler
+import android.os.Looper
 import android.view.Gravity
 import android.widget.FrameLayout
 import android.widget.ProgressBar
@@ -130,7 +132,9 @@ class TbchatMediaPickerPlugin : FlutterPlugin, MethodCallHandler, ActivityAware 
                                         val path = uriToPath(uri)
                                         val size = SafeImageCompressor.getSourceSize(context, path)
                                         if (size > SafeImageCompressor.LARGE_IMAGE_THRESHOLD_BYTES) {
-                                            // 大图（>10MB）：子线程安全压缩，避免 OOM
+                                            // 大图（>10MB）：子线程安全压缩，避免 OOM；callback 必须回到主线程，
+                                            // 否则 PictureSelector 内部会因 "Can't create handler inside thread that has not called Looper.prepare()" 崩溃
+                                            val mainHandler = Handler(Looper.getMainLooper())
                                             Thread {
                                                 try {
                                                     val resultPath = SafeImageCompressor.compress(
@@ -140,10 +144,10 @@ class TbchatMediaPickerPlugin : FlutterPlugin, MethodCallHandler, ActivityAware 
                                                             SafeImageCompressor.DEFAULT_MAX_SIDE_PX,
                                                             SafeImageCompressor.DEFAULT_QUALITY
                                                     )
-                                                    compressCallback?.onCallback(path, resultPath)
+                                                    mainHandler.post { compressCallback?.onCallback(path, resultPath) }
                                                 } catch (e: Exception) {
                                                     Log.e("TbchatMediaPickerPlugin", "Safe compress failed: ${e.message}")
-                                                    compressCallback?.onCallback(path, null)
+                                                    mainHandler.post { compressCallback?.onCallback(path, null) }
                                                 }
                                             }.start()
                                         } else {
