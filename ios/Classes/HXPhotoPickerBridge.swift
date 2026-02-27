@@ -134,11 +134,16 @@ final class HXPhotoPickerBridge: NSObject {
                     }
                     let mimeType = self.mimeType(for: URL(fileURLWithPath: processed.deliveryPath), mediaType: mediaType)
                     let fileName = (processed.deliveryPath as NSString).lastPathComponent
-                    // path：与 Android 一致，非原图时为原图路径，原图>10MP 时为缩小后路径；sandboxPath 为实际使用的文件路径
                     let map: [String: Any] = [
                         "id": index + 1,
-                        "path": processed.pathField,
-                        "compressPath": processed.compressPath,
+                        "originalPath": processed.originalPath,
+                        "originalSize": processed.originalSize,
+                        "originalWidth": processed.originalWidth,
+                        "originalHeight": processed.originalHeight,
+                        "path": processed.deliveryPath,
+                        "size": processed.size,
+                        "width": processed.width,
+                        "height": processed.height,
                         "cutPath": "",
                         "watermarkPath": "",
                         "videoThumbnailPath": "",
@@ -147,14 +152,6 @@ final class HXPhotoPickerBridge: NSObject {
                         "isCut": false,
                         "mimeType": mimeType,
                         "compressed": processed.compressed,
-                        "width": processed.width,
-                        "height": processed.height,
-                        "cropImageWidth": 0,
-                        "cropImageHeight": 0,
-                        "cropOffsetX": 0,
-                        "cropOffsetY": 0,
-                        "cropResultAspectRatio": 0.0,
-                        "size": processed.size,
                         "isOriginal": isOriginal,
                         "fileName": fileName
                     ]
@@ -176,8 +173,14 @@ final class HXPhotoPickerBridge: NSObject {
 
                 let map: [String: Any] = [
                     "id": index + 1,
+                    "originalPath": path,
+                    "originalSize": size,
+                    "originalWidth": width,
+                    "originalHeight": height,
                     "path": path,
-                    "compressPath": "",
+                    "size": size,
+                    "width": width,
+                    "height": height,
                     "cutPath": "",
                     "watermarkPath": "",
                     "videoThumbnailPath": videoThumbPath,
@@ -186,14 +189,6 @@ final class HXPhotoPickerBridge: NSObject {
                     "isCut": false,
                     "mimeType": mimeType,
                     "compressed": false,
-                    "width": width,
-                    "height": height,
-                    "cropImageWidth": 0,
-                    "cropImageHeight": 0,
-                    "cropOffsetX": 0,
-                    "cropOffsetY": 0,
-                    "cropResultAspectRatio": 0.0,
-                    "size": size,
                     "isOriginal": result.isOriginal,
                     "fileName": fileName
                 ]
@@ -376,12 +371,16 @@ final class HXPhotoPickerBridge: NSObject {
     }
 
     private struct ProcessedPhoto {
-        /// 与 Android 一致：非原图时为原图路径，原图且>10MP 时为缩小后路径，否则为原图路径
-        var pathField: String
-        /// 实际使用的文件路径（压缩图或缩小图或原图）
+        /// 原图路径（始终为导出源路径或复制后的原图路径）
+        var originalPath: String
+        /// 原图文件大小（字节）
+        var originalSize: Int
+        /// 原图宽高
+        var originalWidth: Int
+        var originalHeight: Int
+        /// 交付路径（压缩图/缩放图/原图，供 path 使用）
         var deliveryPath: String
-        /// 压缩图路径，仅当未选原图时有值
-        var compressPath: String
+        /// 交付宽高、大小
         var width: Int
         var height: Int
         var size: Int
@@ -420,7 +419,8 @@ final class HXPhotoPickerBridge: NSObject {
                 imageToCompress = image
             }
             guard let data = imageToCompress.jpegData(compressionQuality: Self.compressQuality) else {
-                return ProcessedPhoto(pathField: pathForOriginal, deliveryPath: pathForOriginal, compressPath: "", width: srcW, height: srcH, size: fileSize(at: sourceURL), compressed: false)
+                let origSize = fileSize(at: sourceURL)
+                return ProcessedPhoto(originalPath: pathForOriginal, originalSize: origSize, originalWidth: srcW, originalHeight: srcH, deliveryPath: pathForOriginal, width: srcW, height: srcH, size: origSize, compressed: false)
             }
             let compressFileName = "hx_compressed_\(UUID().uuidString).jpg"
             let compressFileURL = FileManager.default.temporaryDirectory.appendingPathComponent(compressFileName)
@@ -429,57 +429,67 @@ final class HXPhotoPickerBridge: NSObject {
                 let size = fileSize(at: compressFileURL)
                 let w = Int(imageToCompress.size.width * imageToCompress.scale)
                 let h = Int(imageToCompress.size.height * imageToCompress.scale)
+                let origSize = fileSize(at: sourceURL)
                 return ProcessedPhoto(
-                    pathField: pathForOriginal,
+                    originalPath: pathForOriginal,
+                    originalSize: origSize,
+                    originalWidth: srcW,
+                    originalHeight: srcH,
                     deliveryPath: compressFileURL.path,
-                    compressPath: compressFileURL.path,
                     width: w,
                     height: h,
                     size: size,
                     compressed: true
                 )
             } catch {
-                return ProcessedPhoto(pathField: pathForOriginal, deliveryPath: pathForOriginal, compressPath: "", width: srcW, height: srcH, size: fileSize(at: sourceURL), compressed: false)
+                let origSize = fileSize(at: sourceURL)
+                return ProcessedPhoto(originalPath: pathForOriginal, originalSize: origSize, originalWidth: srcW, originalHeight: srcH, deliveryPath: pathForOriginal, width: srcW, height: srcH, size: origSize, compressed: false)
             }
         }
 
         if pixelCount <= Self.maxPixelsOriginal {
-            // 选原图且 ≤1000 万像素：不处理
+            // 选原图且 ≤1000 万像素：不缩放、不压缩，直接使用原图
+            let origSize = fileSize(at: sourceURL)
             return ProcessedPhoto(
-                pathField: originalPath,
+                originalPath: originalPath,
+                originalSize: origSize,
+                originalWidth: srcW,
+                originalHeight: srcH,
                 deliveryPath: originalPath,
-                compressPath: "",
                 width: srcW,
                 height: srcH,
-                size: fileSize(at: sourceURL),
+                size: origSize,
                 compressed: false
             )
         }
 
-        // 选原图且 >1000 万像素：缩小到 ≤1000 万像素
+        // 选原图且 >1000 万像素：仅像素缩放到 ≤1000 万；交付 path 为缩放后路径
+        let originalSize = fileSize(at: sourceURL)
         let scale = sqrt(CGFloat(Self.maxPixelsOriginal) / CGFloat(pixelCount))
         let newW = max(1, Int(CGFloat(srcW) * scale))
         let newH = max(1, Int(CGFloat(srcH) * scale))
         guard let resized = resizeImage(image, targetWidth: newW, targetHeight: newH),
               let data = resized.jpegData(compressionQuality: 0.9) else {
-            return ProcessedPhoto(pathField: originalPath, deliveryPath: originalPath, compressPath: "", width: srcW, height: srcH, size: fileSize(at: sourceURL), compressed: false)
+            return ProcessedPhoto(originalPath: originalPath, originalSize: originalSize, originalWidth: srcW, originalHeight: srcH, deliveryPath: originalPath, width: srcW, height: srcH, size: originalSize, compressed: false)
         }
         let fileName = "hx_resized_\(UUID().uuidString).jpg"
         let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent(fileName)
         do {
             try data.write(to: fileURL, options: .atomic)
-            let size = fileSize(at: fileURL)
+            let scaledSize = fileSize(at: fileURL)
             return ProcessedPhoto(
-                pathField: fileURL.path,
+                originalPath: originalPath,
+                originalSize: originalSize,
+                originalWidth: srcW,
+                originalHeight: srcH,
                 deliveryPath: fileURL.path,
-                compressPath: "",
                 width: newW,
                 height: newH,
-                size: size,
+                size: scaledSize,
                 compressed: false
             )
         } catch {
-            return ProcessedPhoto(pathField: originalPath, deliveryPath: originalPath, compressPath: "", width: srcW, height: srcH, size: fileSize(at: sourceURL), compressed: false)
+            return ProcessedPhoto(originalPath: originalPath, originalSize: originalSize, originalWidth: srcW, originalHeight: srcH, deliveryPath: originalPath, width: srcW, height: srcH, size: originalSize, compressed: false)
         }
     }
 

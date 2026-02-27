@@ -2,7 +2,6 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:image/image.dart' as img;
 import 'package:tbchat_media_picker/tbchat_media_picker.dart';
 
 void main() {
@@ -79,34 +78,6 @@ class _MyAppState extends State<MyApp> {
       return '$minutes分$remainingSeconds秒';
     }
     return '$remainingSeconds秒';
-  }
-
-  /// 获取文件大小（异步）
-  Future<int> _getFileSize(String filePath) async {
-    try {
-      final file = File(filePath);
-      if (await file.exists()) {
-        return await file.length();
-      }
-    } catch (e) {
-      debugPrint('获取文件大小失败: $e');
-    }
-    return 0;
-  }
-
-  /// 获取图片文件的宽高，返回 "宽 × 高"；失败或非图片返回空字符串
-  Future<String> _getImageDimensions(String filePath) async {
-    try {
-      final file = File(filePath);
-      if (!await file.exists()) return '';
-      final bytes = await file.readAsBytes();
-      final image = img.decodeImage(bytes);
-      if (image == null) return '';
-      return '${image.width} × ${image.height}';
-    } catch (e) {
-      debugPrint('获取图片尺寸失败: $e');
-      return '';
-    }
   }
 
   @override
@@ -234,60 +205,31 @@ class _MyAppState extends State<MyApp> {
                                   _buildInfoRow('文件名', media.fileName),
                                 if (media.mimeType.isNotEmpty)
                                   _buildInfoRow('MIME类型', media.mimeType),
-                                if (media.size > 0)
-                                  _buildInfoRow('文件大小', _formatFileSize(media.size)),
                                 if (media.duration > 0)
                                   _buildInfoRow('时长', _formatDuration(media.duration)),
-                                
-                                // 尺寸信息
-                                if (media.width > 0 && media.height > 0)
-                                  _buildInfoRow('尺寸', '${media.width} × ${media.height}'),
-                                if (media.cropImageWidth > 0 && media.cropImageHeight > 0)
-                                  _buildInfoRow('裁剪尺寸', '${media.cropImageWidth} × ${media.cropImageHeight}'),
-                                if (media.cropOffsetX != 0 || media.cropOffsetY != 0)
-                                  _buildInfoRow('裁剪偏移', 'X: ${media.cropOffsetX}, Y: ${media.cropOffsetY}'),
-                                if (media.cropResultAspectRatio > 0)
-                                  _buildInfoRow('裁剪宽高比', media.cropResultAspectRatio.toStringAsFixed(2)),
-                                
-                                // 路径信息
+
+                                // 原图数据（始终展示）
+                                if (media.originalPath.isNotEmpty)
+                                  _buildInfoRow('原图路径', media.originalPath),
+                                if (media.originalSize > 0)
+                                  _buildInfoRow('原图大小', _formatFileSize(media.originalSize)),
+                                if (media.originalWidth > 0 && media.originalHeight > 0)
+                                  _buildInfoRow('原图尺寸', '${media.originalWidth} × ${media.originalHeight}'),
+
+                                // 交付数据（压缩/缩放后，无则与原图一致）
                                 if (media.path.isNotEmpty)
                                   _buildInfoRow('路径', media.path),
+                                if (media.size > 0)
+                                  _buildInfoRow('文件大小', _formatFileSize(media.size)),
+                                if (media.width > 0 && media.height > 0)
+                                  _buildInfoRow('尺寸', '${media.width} × ${media.height}'),
+
                                 if (media.cutPath.isNotEmpty)
                                   _buildInfoRow('裁剪路径', media.cutPath),
-                                if (media.compressPath.isNotEmpty) ...[
-                                  _buildInfoRow('压缩路径', media.compressPath),
-                                  FutureBuilder<int>(
-                                    future: _getFileSize(media.compressPath),
-                                    builder: (context, snapshot) {
-                                      if (snapshot.connectionState == ConnectionState.waiting) {
-                                        return _buildInfoRow('压缩后大小', '加载中...');
-                                      } else if (snapshot.hasData && snapshot.data! > 0) {
-                                        return _buildInfoRow('压缩后大小', _formatFileSize(snapshot.data!));
-                                      } else {
-                                        return const SizedBox.shrink();
-                                      }
-                                    },
-                                  ),
-                                  FutureBuilder<String>(
-                                    future: _getImageDimensions(media.compressPath),
-                                    builder: (context, snapshot) {
-                                      if (snapshot.connectionState == ConnectionState.waiting) {
-                                        return _buildInfoRow('压缩后尺寸', '加载中...');
-                                      } else if (snapshot.hasData && snapshot.data!.isNotEmpty) {
-                                        return _buildInfoRow('压缩后尺寸', snapshot.data!);
-                                      } else {
-                                        return const SizedBox.shrink();
-                                      }
-                                    },
-                                  ),
-                                ],
                                 if (media.watermarkPath.isNotEmpty)
                                   _buildInfoRow('水印路径', media.watermarkPath),
                                 if (media.videoThumbnailPath.isNotEmpty)
                                   _buildInfoRow('视频缩略图', media.videoThumbnailPath),
-                                if (media.sandboxPath.isNotEmpty)
-                                  _buildInfoRow('沙箱路径', media.sandboxPath),
-                                
                                 // 状态信息
                                 _buildInfoRow('已裁剪', media.isCut ? '是' : '否'),
                                 _buildInfoRow('已压缩', media.compressed ? '是' : '否'),
@@ -333,7 +275,7 @@ class _MyAppState extends State<MyApp> {
             child: Text(
               value,
               style: const TextStyle(fontSize: 14),
-              maxLines: 2,
+              maxLines: 10,
               overflow: TextOverflow.ellipsis,
             ),
           ),
@@ -342,7 +284,7 @@ class _MyAppState extends State<MyApp> {
     );
   }
 
-  /// 在 id 上方展示选择的图片/视频；若有压缩图则一并展示
+  /// 在 id 上方展示选择的图片/视频；path 为交付路径（压缩/缩放后或原图）
   Widget _buildMediaPreview(MediaEntity media) {
     const double previewHeight = 120;
     const double spacing = 8;
@@ -388,18 +330,18 @@ class _MyAppState extends State<MyApp> {
     }
 
     if (media.isImage) {
-      final hasCompress = media.compressPath.isNotEmpty && media.compressPath != media.path;
-      if (hasCompress) {
+      final showBoth = media.originalPath.isNotEmpty && media.path != media.originalPath;
+      if (showBoth) {
         return Row(
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
-            thumbnail(media.path, '原图'),
+            thumbnail(media.originalPath, '原图'),
             const SizedBox(width: spacing),
-            thumbnail(media.compressPath, '压缩'),
+            thumbnail(media.path, '交付'),
           ],
         );
       }
-      final displayPath = media.sandboxPath.isNotEmpty ? media.sandboxPath : media.path;
+      final displayPath = media.path.isNotEmpty ? media.path : media.originalPath;
       if (displayPath.isEmpty) return const SizedBox.shrink();
       return thumbnail(displayPath, '');
     }
