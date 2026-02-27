@@ -1,7 +1,12 @@
 package com.tbchat.tbchat_media_picker
 
 import android.app.Activity
+import android.app.Dialog
 import android.content.Context
+import android.graphics.Color
+import android.view.Gravity
+import android.widget.FrameLayout
+import android.widget.ProgressBar
 import android.graphics.Bitmap
 import android.media.MediaMetadataRetriever
 import android.net.Uri
@@ -74,6 +79,8 @@ class TbchatMediaPickerPlugin : FlutterPlugin, MethodCallHandler, ActivityAware 
             val maxSelectNum = args["maxSelectNum"] as? Int ?: 1
             var maxSize = args["maxSize"] as? Long ?: 0L
             val gridCount = args["gridCount"] as? Int ?: 4 // 每排显示数量，默认 4
+            val maxWidth = args["maxWidth"] as? Int ?: 0 // 图片最大宽度限制，0=不限制
+            val maxHeight = args["maxHeight"] as? Int ?: 0 // 图片最大高度限制，0=不限制
 
             try {
                 val mediaType =
@@ -176,7 +183,7 @@ class TbchatMediaPickerPlugin : FlutterPlugin, MethodCallHandler, ActivityAware 
                                 object : OnResultCallbackListener<LocalMedia> {
                                     override fun onResult(result: ArrayList<LocalMedia>) {
                                         Log.d("TbchatMediaPickerPlugin", "onResult: $result")
-                                        handleSelectionResult(result)
+                                        handleSelectionResult(result, maxWidth, maxHeight)
                                     }
 
                                     override fun onCancel() {
@@ -202,8 +209,10 @@ class TbchatMediaPickerPlugin : FlutterPlugin, MethodCallHandler, ActivityAware 
      * 将 PictureSelector 返回的 [LocalMedia] 列表转成 JSON 数组字符串并回传 Flutter. 字段与 Dart 端 MediaEntity.fromMap
      * 一致，便于双端统一解析.
      * 选原图时：不压缩，仅当图片 >1000 万像素时做像素缩放到 ≤1000 万，path/sandboxPath 用缩放后路径.
+     * 当 maxWidth>0 且 maxHeight>0 时，图片交付前会缩放到该分辨率以内.
+     * 缩放等耗时操作期间显示 loading.
      */
-    private fun handleSelectionResult(result: ArrayList<LocalMedia>) {
+    private fun handleSelectionResult(result: ArrayList<LocalMedia>, maxWidth: Int = 0, maxHeight: Int = 0) {
         try {
             if (result.isEmpty()) {
                 pendingResult?.success(JSONArray().toString())
@@ -211,10 +220,65 @@ class TbchatMediaPickerPlugin : FlutterPlugin, MethodCallHandler, ActivityAware 
                 return
             }
 
-            val ctx = activity?.applicationContext
-            val cacheDir = ctx?.cacheDir
-            val jsonArray = JSONArray()
-            for (media in result) {
+            val act = activity ?: run {
+                pendingResult?.success(buildResultJson(result, null, null, maxWidth, maxHeight))
+                pendingResult = null
+                return
+            }
+            val ctx = act.applicationContext
+            val cacheDir = ctx.cacheDir
+
+            val loadingDialog = Dialog(act, android.R.style.Theme_Translucent_NoTitleBar).apply {
+                setCancelable(false)
+                val content = FrameLayout(act).apply {
+                    setBackgroundColor(Color.TRANSPARENT)
+                    addView(ProgressBar(act).apply {
+                        layoutParams = FrameLayout.LayoutParams(
+                            FrameLayout.LayoutParams.WRAP_CONTENT,
+                            FrameLayout.LayoutParams.WRAP_CONTENT,
+                            Gravity.CENTER
+                        )
+                    })
+                }
+                setContentView(content)
+            }
+            act.runOnUiThread { loadingDialog.show() }
+
+            Thread {
+                try {
+                    val jsonStr = buildResultJson(result, ctx, cacheDir, maxWidth, maxHeight)
+                    act.runOnUiThread {
+                        try {
+                            loadingDialog.dismiss()
+                        } catch (_: Exception) { }
+                        pendingResult?.success(jsonStr)
+                        pendingResult = null
+                    }
+                } catch (e: Exception) {
+                    act.runOnUiThread {
+                        try {
+                            loadingDialog.dismiss()
+                        } catch (_: Exception) { }
+                        pendingResult?.error("RESULT_ERROR", "Failed to process result: ${e.message}", null)
+                        pendingResult = null
+                    }
+                }
+            }.start()
+        } catch (e: Exception) {
+            pendingResult?.error("RESULT_ERROR", "Failed to process result: ${e.message}", null)
+            pendingResult = null
+        }
+    }
+
+    private fun buildResultJson(
+        result: ArrayList<LocalMedia>,
+        ctx: Context?,
+        cacheDir: File?,
+        maxWidth: Int,
+        maxHeight: Int
+    ): String {
+        val jsonArray = JSONArray()
+        for (media in result) {
                 val originalPath = media.realPath ?: ""
                 var path = originalPath
                 var sandboxPath = media.sandboxPath ?: path
@@ -267,6 +331,22 @@ class TbchatMediaPickerPlugin : FlutterPlugin, MethodCallHandler, ActivityAware 
                     }
                 }
 
+                // 当设置了 maxWidth/maxHeight 且图片超限时，缩放到限制以内（仅图片）
+                if (maxWidth > 0 && maxHeight > 0 && (media.mimeType ?: "").startsWith("image/") && ctx != null && cacheDir != null) {
+                    if (width > maxWidth || height > maxHeight) {
+                        val dimLimitedPath = SafeImageCompressor.resizeToMaxDimensions(ctx, path, cacheDir, maxWidth, maxHeight)
+                        if (!dimLimitedPath.isNullOrBlank()) {
+                            path = dimLimitedPath
+                            sandboxPath = path
+                            size = File(path).length().coerceAtLeast(0)
+                            SafeImageCompressor.getSourceDimensions(ctx, path)?.let { (w, h) ->
+                                width = w
+                                height = h
+                            }
+                        }
+                    }
+                }
+
                 val jsonObject = JSONObject()
                 jsonObject.put("id", media.id)
                 jsonObject.put("originalPath", originalPath)
@@ -299,14 +379,8 @@ class TbchatMediaPickerPlugin : FlutterPlugin, MethodCallHandler, ActivityAware 
                 jsonObject.put("isGalleryEnabledMask", media.isGalleryEnabledMask)
                 jsonObject.put("isEditorImage", media.isEditorImage)
                 jsonArray.put(jsonObject)
-            }
-
-            pendingResult?.success(jsonArray.toString())
-            pendingResult = null
-        } catch (e: Exception) {
-            pendingResult?.error("RESULT_ERROR", "Failed to process result: ${e.message}", null)
-            pendingResult = null
         }
+        return jsonArray.toString()
     }
 
     /**

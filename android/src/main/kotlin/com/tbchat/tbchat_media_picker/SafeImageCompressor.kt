@@ -103,6 +103,92 @@ object SafeImageCompressor {
     }
 
     /**
+     * 将图片缩放到不超过 maxWidth x maxHeight，保持宽高比。用于最大分辨率限制。
+     * 当图片宽或高大于限制时，按比例缩放到限制以内。
+     *
+     * @param context Context
+     * @param sourcePath 源路径（文件或 content://）
+     * @param targetDir 输出目录
+     * @param maxWidth 最大宽度，≤0 表示不限制
+     * @param maxHeight 最大高度，≤0 表示不限制
+     * @return 缩放后文件路径，失败或无需缩放时返回 null（调用方应继续使用原 path）
+     */
+    @JvmStatic
+    fun resizeToMaxDimensions(
+        context: Context,
+        sourcePath: String?,
+        targetDir: File,
+        maxWidth: Int,
+        maxHeight: Int
+    ): String? {
+        if (sourcePath.isNullOrBlank() || maxWidth <= 0 || maxHeight <= 0) return null
+        var inputStream: InputStream? = null
+        try {
+            inputStream = openSourceStream(context, sourcePath) ?: return null
+            val options = BitmapFactory.Options().apply {
+                inJustDecodeBounds = true
+                inSampleSize = 1
+            }
+            BitmapFactory.decodeStream(inputStream, null, options)
+            inputStream.close()
+            inputStream = null
+
+            val srcW = options.outWidth
+            val srcH = options.outHeight
+            if (srcW <= 0 || srcH <= 0) return null
+            if (srcW <= maxWidth && srcH <= maxHeight) return null
+
+            val scale = minOf(
+                maxWidth.toDouble() / srcW,
+                maxHeight.toDouble() / srcH,
+                1.0
+            )
+            val newW = maxOf(1, (srcW * scale).toInt())
+            val newH = maxOf(1, (srcH * scale).toInt())
+
+            val maxSide = maxOf(newW, newH)
+            val inSampleSize = computeInSampleSize(srcW, srcH, maxSide)
+
+            inputStream = openSourceStream(context, sourcePath) ?: return null
+            val decodeOptions = BitmapFactory.Options().apply {
+                inJustDecodeBounds = false
+                this.inSampleSize = inSampleSize
+                inPreferredConfig = Bitmap.Config.RGB_565
+                inDither = false
+                inScaled = true
+            }
+            var bitmap: Bitmap? = BitmapFactory.decodeStream(inputStream, null, decodeOptions)
+            inputStream.close()
+            inputStream = null
+
+            if (bitmap == null) return null
+
+            val scaled = if (bitmap.width != newW || bitmap.height != newH) {
+                Bitmap.createScaledBitmap(bitmap, newW, newH, true).also {
+                    if (it != bitmap && !bitmap.isRecycled) bitmap.recycle()
+                }
+            } else bitmap
+
+            val outFile = File(targetDir, "max_dim_${System.currentTimeMillis()}_${scaled.hashCode()}.jpg")
+            FileOutputStream(outFile).use { fos ->
+                scaled.compress(Bitmap.CompressFormat.JPEG, 90, fos)
+                fos.flush()
+            }
+            val path = outFile.absolutePath
+            if (!scaled.isRecycled) scaled.recycle()
+            return path
+        } catch (e: OutOfMemoryError) {
+            Log.e(TAG, "OOM during resizeToMaxDimensions", e)
+            return null
+        } catch (e: Exception) {
+            Log.e(TAG, "resizeToMaxDimensions failed: ${e.message}", e)
+            return null
+        } finally {
+            try { inputStream?.close() } catch (_: Exception) { }
+        }
+    }
+
+    /**
      * 安全压缩大图并保存为 JPEG。
      *
      * @param context Context，用于 content:// 的 InputStream

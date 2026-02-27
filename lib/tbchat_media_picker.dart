@@ -10,6 +10,8 @@ class TbchatMediaPicker {
   /// [maxSelectNum] 最大选择数量，默认为1
   /// [maxSize] 最大选择大小（字节），默认为0（不限制，实际会设置为1GB）
   /// [gridCount] 选择器每排的显示数量（相册网格列数），默认为4
+  /// [maxWidth] 图片最大宽度限制，0 表示不限制；超出时缩放到该值以内
+  /// [maxHeight] 图片最大高度限制，0 表示不限制；超出时缩放到该值以内
   /// 
   /// 返回选择的媒体文件列表，每个文件为 [MediaEntity] 对象
   static Future<List<MediaEntity>> pickMedia({
@@ -17,12 +19,16 @@ class TbchatMediaPicker {
     int maxSelectNum = 1,
     int maxSize = 0,
     int gridCount = 4,
+    int maxWidth = 0,
+    int maxHeight = 0,
   }) {
     return TbchatMediaPickerPlatform.instance.pickMedia(
       mimeType: mimeType,
       maxSelectNum: maxSelectNum,
       maxSize: maxSize,
       gridCount: gridCount,
+      maxWidth: maxWidth,
+      maxHeight: maxHeight,
     );
   }
 }

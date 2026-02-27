@@ -25,6 +25,12 @@ final class HXPhotoPickerBridge: NSObject {
     private var maxSizeBytes: Int = 0
     /// 当前选择的媒体类型：0=图片+视频，1=仅图片，2=仅视频
     private var currentMimeType: Int = 0
+    /// 图片最大宽度限制，0 表示不限制
+    private var maxWidthForImage: Int = 0
+    /// 图片最大高度限制，0 表示不限制
+    private var maxHeightForImage: Int = 0
+    /// Loading 遮罩视图，添加到 key window 的 rootViewController.view 上
+    private weak var loadingOverlay: UIView?
 
     /// 入口：打开媒体选择器。
     /// - Parameters:
@@ -32,12 +38,14 @@ final class HXPhotoPickerBridge: NSObject {
     ///   - maxSelectNum: 最大可选数量。
     ///   - maxSize: 最大文件大小（字节），0 表示不限制。
     ///   - gridCount: 选择器每排（每行）显示数量，默认 4。
+    ///   - maxWidth: 图片最大宽度限制，0 表示不限制。
+    ///   - maxHeight: 图片最大高度限制，0 表示不限制。
     ///   - result: Flutter 回调，成功时传入 JSON 数组字符串，取消传 "[]"，失败传 FlutterError。
     /// Flutter 入口方法：确保在主线程展示系统 UI。
     /// HXPhotoPicker 依赖 UIKit，必须在主线程调用。
-    func pickMedia(mimeType: Int, maxSelectNum: Int, maxSize: Int, gridCount: Int, result: @escaping FlutterResult) {
+    func pickMedia(mimeType: Int, maxSelectNum: Int, maxSize: Int, gridCount: Int, maxWidth: Int = 0, maxHeight: Int = 0, result: @escaping FlutterResult) {
         DispatchQueue.main.async { [weak self] in
-            self?.performPick(mimeType: mimeType, maxSelectNum: maxSelectNum, maxSize: maxSize, gridCount: gridCount, result: result)
+            self?.performPick(mimeType: mimeType, maxSelectNum: maxSelectNum, maxSize: maxSize, gridCount: gridCount, maxWidth: maxWidth, maxHeight: maxHeight, result: result)
         }
     }
 
@@ -46,7 +54,7 @@ final class HXPhotoPickerBridge: NSObject {
     /// 1) 兜底参数与并发保护
     /// 2) 组装 HXPhotoPicker 配置
     /// 3) 绑定完成/取消回调
-    private func performPick(mimeType: Int, maxSelectNum: Int, maxSize: Int, gridCount: Int, result: @escaping FlutterResult) {
+    private func performPick(mimeType: Int, maxSelectNum: Int, maxSize: Int, gridCount: Int, maxWidth: Int = 0, maxHeight: Int = 0, result: @escaping FlutterResult) {
         if flutterResult != nil {
             result(FlutterError(code: "PICK_IN_PROGRESS", message: "Another pickMedia call is in progress", details: nil))
             return
@@ -54,6 +62,8 @@ final class HXPhotoPickerBridge: NSObject {
 
         flutterResult = result
         currentMimeType = mimeType
+        maxWidthForImage = maxWidth
+        maxHeightForImage = maxHeight
         // maxSize=0 表示不限制，这里约定为 1GB 以便与 Android 行为一致
         maxSizeBytes = maxSize > 0 ? maxSize : 1024 * 1024 * 1024
 
@@ -99,13 +109,19 @@ final class HXPhotoPickerBridge: NSObject {
             return
         }
 
-        // isOriginal 表示是否选择原图（与 Android isOriginal 字段对齐）
+        // 缩放/处理期间显示 loading（与 Android 一致：仅居中 loading，无边框）
+        // 需在 getURLs 前同步显示，覆盖整个处理期间；图片处理放后台以保证 loading 正常转动
+        if Thread.isMainThread {
+            showLoadingOverlay(in: pickerController)
+        } else {
+            DispatchQueue.main.sync { showLoadingOverlay(in: pickerController) }
+        }
+
         let isOriginal = result.isOriginal
-        // HXPhotoPicker 的 URL 导出是异步回调形式，这里用串行队列收集结果，避免并发写数组
         let syncQueue = DispatchQueue(label: "tbchat_media_picker.hxphoto.result")
         var items = Array(repeating: [String: Any](), count: assets.count)
+        let group = DispatchGroup()
 
-        // 通过 URL 导出资源，保证可读文件路径与尺寸/时长等信息可计算
         result.getURLs(
             options: .any,
             toFileConfigHandler: nil,
@@ -114,63 +130,61 @@ final class HXPhotoPickerBridge: NSObject {
             switch urlResult {
             case .success(let assetURLResult):
                 let mediaType = assetURLResult.mediaType
-                // 再次按 mimeType 过滤（双保险）
                 if !self.isAllowed(mediaType: mediaType) {
                     return
                 }
-
                 let url = assetURLResult.url
                 let size = self.fileSize(at: url)
-                // 过滤掉超过 maxSize 的资源
                 if self.maxSizeBytes > 0 && size > self.maxSizeBytes {
                     return
                 }
 
                 if mediaType == .photo {
-                    // 图片：按是否原图做压缩或降分辨率
-                    let isOriginal = result.isOriginal
-                    guard let processed = self.processPhotoImage(sourceURL: url, isOriginal: isOriginal) else {
-                        return
-                    }
-                    let mimeType = self.mimeType(for: URL(fileURLWithPath: processed.deliveryPath), mediaType: mediaType)
-                    let fileName = (processed.deliveryPath as NSString).lastPathComponent
-                    let map: [String: Any] = [
-                        "id": index + 1,
-                        "originalPath": processed.originalPath,
-                        "originalSize": processed.originalSize,
-                        "originalWidth": processed.originalWidth,
-                        "originalHeight": processed.originalHeight,
-                        "path": processed.deliveryPath,
-                        "size": processed.size,
-                        "width": processed.width,
-                        "height": processed.height,
-                        "cutPath": "",
-                        "watermarkPath": "",
-                        "videoThumbnailPath": "",
-                        "sandboxPath": processed.deliveryPath,
-                        "duration": 0,
-                        "isCut": false,
-                        "mimeType": mimeType,
-                        "compressed": processed.compressed,
-                        "isOriginal": isOriginal,
-                        "fileName": fileName
-                    ]
-                    syncQueue.async {
-                        if index < items.count {
-                            items[index] = map
+                    // 图片处理放后台队列，避免阻塞主线程，保证 loading 正常转动
+                    group.enter()
+                    DispatchQueue.global(qos: .userInitiated).async {
+                        defer { group.leave() }
+                        guard let processed = self.processPhotoImage(sourceURL: url, isOriginal: isOriginal) else {
+                            return
+                        }
+                        let mimeType = self.mimeType(for: URL(fileURLWithPath: processed.deliveryPath), mediaType: mediaType)
+                        let fileName = (processed.deliveryPath as NSString).lastPathComponent
+                        let map: [String: Any] = [
+                            "id": index + 1,
+                            "originalPath": processed.originalPath,
+                            "originalSize": processed.originalSize,
+                            "originalWidth": processed.originalWidth,
+                            "originalHeight": processed.originalHeight,
+                            "path": processed.deliveryPath,
+                            "size": processed.size,
+                            "width": processed.width,
+                            "height": processed.height,
+                            "cutPath": "",
+                            "watermarkPath": "",
+                            "videoThumbnailPath": "",
+                            "sandboxPath": processed.deliveryPath,
+                            "duration": 0,
+                            "isCut": false,
+                            "mimeType": mimeType,
+                            "compressed": processed.compressed,
+                            "isOriginal": isOriginal,
+                            "fileName": fileName
+                        ]
+                        syncQueue.async {
+                            if index < items.count { items[index] = map }
                         }
                     }
                     return
                 }
 
                 // 视频：不做压缩/降分辨率，仅导出路径与缩略图
+                group.enter()
                 let path = url.path
                 let mimeType = self.mimeType(for: url, mediaType: mediaType)
                 let fileName = url.lastPathComponent
                 let (width, height) = self.mediaDimensions(for: url, mediaType: mediaType)
                 let duration = self.videoDuration(for: url)
                 let videoThumbPath = self.createVideoThumbnail(for: url) ?? ""
-
                 let map: [String: Any] = [
                     "id": index + 1,
                     "originalPath": path,
@@ -192,11 +206,9 @@ final class HXPhotoPickerBridge: NSObject {
                     "isOriginal": result.isOriginal,
                     "fileName": fileName
                 ]
-
                 syncQueue.async {
-                    if index < items.count {
-                        items[index] = map
-                    }
+                    if index < items.count { items[index] = map }
+                    group.leave()
                 }
             case .failure:
                 break
@@ -204,10 +216,11 @@ final class HXPhotoPickerBridge: NSObject {
         },
             completionHandler: { [weak self] _ in
             guard let self else { return }
-            // 回调触发后，统一在主线程返回结果
-            syncQueue.async {
+            // 等待所有图片/视频处理完成后再隐藏 loading 并回调 Flutter
+            group.notify(queue: syncQueue) {
                 let filtered = items.filter { !$0.isEmpty }
                 DispatchQueue.main.async {
+                    self.hideLoadingOverlay()
                     self.finishWithItems(filtered)
                 }
             }
@@ -420,7 +433,7 @@ final class HXPhotoPickerBridge: NSObject {
             }
             guard let data = imageToCompress.jpegData(compressionQuality: Self.compressQuality) else {
                 let origSize = fileSize(at: sourceURL)
-                return ProcessedPhoto(originalPath: pathForOriginal, originalSize: origSize, originalWidth: srcW, originalHeight: srcH, deliveryPath: pathForOriginal, width: srcW, height: srcH, size: origSize, compressed: false)
+                return applyMaxDimensions(to: ProcessedPhoto(originalPath: pathForOriginal, originalSize: origSize, originalWidth: srcW, originalHeight: srcH, deliveryPath: pathForOriginal, width: srcW, height: srcH, size: origSize, compressed: false))
             }
             let compressFileName = "hx_compressed_\(UUID().uuidString).jpg"
             let compressFileURL = FileManager.default.temporaryDirectory.appendingPathComponent(compressFileName)
@@ -430,7 +443,7 @@ final class HXPhotoPickerBridge: NSObject {
                 let w = Int(imageToCompress.size.width * imageToCompress.scale)
                 let h = Int(imageToCompress.size.height * imageToCompress.scale)
                 let origSize = fileSize(at: sourceURL)
-                return ProcessedPhoto(
+                return applyMaxDimensions(to: ProcessedPhoto(
                     originalPath: pathForOriginal,
                     originalSize: origSize,
                     originalWidth: srcW,
@@ -440,17 +453,17 @@ final class HXPhotoPickerBridge: NSObject {
                     height: h,
                     size: size,
                     compressed: true
-                )
+                ))
             } catch {
                 let origSize = fileSize(at: sourceURL)
-                return ProcessedPhoto(originalPath: pathForOriginal, originalSize: origSize, originalWidth: srcW, originalHeight: srcH, deliveryPath: pathForOriginal, width: srcW, height: srcH, size: origSize, compressed: false)
+                return applyMaxDimensions(to: ProcessedPhoto(originalPath: pathForOriginal, originalSize: origSize, originalWidth: srcW, originalHeight: srcH, deliveryPath: pathForOriginal, width: srcW, height: srcH, size: origSize, compressed: false))
             }
         }
 
         if pixelCount <= Self.maxPixelsOriginal {
             // 选原图且 ≤1000 万像素：不缩放、不压缩，直接使用原图
             let origSize = fileSize(at: sourceURL)
-            return ProcessedPhoto(
+            return applyMaxDimensions(to: ProcessedPhoto(
                 originalPath: originalPath,
                 originalSize: origSize,
                 originalWidth: srcW,
@@ -460,7 +473,7 @@ final class HXPhotoPickerBridge: NSObject {
                 height: srcH,
                 size: origSize,
                 compressed: false
-            )
+            ))
         }
 
         // 选原图且 >1000 万像素：仅像素缩放到 ≤1000 万；交付 path 为缩放后路径
@@ -470,14 +483,14 @@ final class HXPhotoPickerBridge: NSObject {
         let newH = max(1, Int(CGFloat(srcH) * scale))
         guard let resized = resizeImage(image, targetWidth: newW, targetHeight: newH),
               let data = resized.jpegData(compressionQuality: 0.9) else {
-            return ProcessedPhoto(originalPath: originalPath, originalSize: originalSize, originalWidth: srcW, originalHeight: srcH, deliveryPath: originalPath, width: srcW, height: srcH, size: originalSize, compressed: false)
+            return applyMaxDimensions(to: ProcessedPhoto(originalPath: originalPath, originalSize: originalSize, originalWidth: srcW, originalHeight: srcH, deliveryPath: originalPath, width: srcW, height: srcH, size: originalSize, compressed: false))
         }
         let fileName = "hx_resized_\(UUID().uuidString).jpg"
         let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent(fileName)
         do {
             try data.write(to: fileURL, options: .atomic)
             let scaledSize = fileSize(at: fileURL)
-            return ProcessedPhoto(
+            return applyMaxDimensions(to: ProcessedPhoto(
                 originalPath: originalPath,
                 originalSize: originalSize,
                 originalWidth: srcW,
@@ -487,9 +500,54 @@ final class HXPhotoPickerBridge: NSObject {
                 height: newH,
                 size: scaledSize,
                 compressed: false
-            )
+            ))
         } catch {
-            return ProcessedPhoto(originalPath: originalPath, originalSize: originalSize, originalWidth: srcW, originalHeight: srcH, deliveryPath: originalPath, width: srcW, height: srcH, size: originalSize, compressed: false)
+            return applyMaxDimensions(to: ProcessedPhoto(originalPath: originalPath, originalSize: originalSize, originalWidth: srcW, originalHeight: srcH, deliveryPath: originalPath, width: srcW, height: srcH, size: originalSize, compressed: false))
+        }
+    }
+
+    /// 在处理/缩放期间显示 loading，与 Android 一致：透明背景，仅居中 loading 指示器，无边框
+    /// 添加到当前 key window 上，不新建 UIWindow。需在主线程同步调用，确保在 getURLs 前立即显示
+    private func showLoadingOverlay(in pickerController: PhotoPickerController) {
+        self.loadingOverlay?.removeFromSuperview()
+        self.loadingOverlay = nil
+        let windows = UIApplication.shared.connectedScenes
+                .compactMap { $0 as? UIWindowScene }
+                .flatMap { $0.windows }
+        // 优先用 present 了 picker 的 window（Flutter 主窗口），picker dismiss 后 overlay 仍可见
+        let targetWindow = windows.first { w in
+            guard let root = w.rootViewController, !w.isHidden else { return false }
+            return root.presentedViewController === pickerController
+        } ?? windows.first(where: { $0.isKeyWindow })
+            ?? windows.first(where: { !$0.isHidden })
+            ?? windows.first
+        guard let window = targetWindow else { return }
+
+        let overlay = UIView()
+        overlay.backgroundColor = .clear
+        overlay.translatesAutoresizingMaskIntoConstraints = false
+        window.addSubview(overlay)
+        NSLayoutConstraint.activate([
+            overlay.topAnchor.constraint(equalTo: window.topAnchor),
+            overlay.leadingAnchor.constraint(equalTo: window.leadingAnchor),
+            overlay.trailingAnchor.constraint(equalTo: window.trailingAnchor),
+            overlay.bottomAnchor.constraint(equalTo: window.bottomAnchor),
+        ])
+        let spinner = UIActivityIndicatorView(style: .large)
+        spinner.translatesAutoresizingMaskIntoConstraints = false
+        spinner.startAnimating()
+        overlay.addSubview(spinner)
+        NSLayoutConstraint.activate([
+            spinner.centerXAnchor.constraint(equalTo: overlay.centerXAnchor),
+            spinner.centerYAnchor.constraint(equalTo: overlay.centerYAnchor),
+        ])
+        self.loadingOverlay = overlay
+    }
+
+    private func hideLoadingOverlay() {
+        DispatchQueue.main.async { [weak self] in
+            self?.loadingOverlay?.removeFromSuperview()
+            self?.loadingOverlay = nil
         }
     }
 
@@ -501,5 +559,40 @@ final class HXPhotoPickerBridge: NSObject {
         defer { UIGraphicsEndImageContext() }
         image.draw(in: CGRect(origin: .zero, size: size))
         return UIGraphicsGetImageFromCurrentImageContext()
+    }
+
+    /// 当设置了 maxWidth/maxHeight 且交付图超限时，缩放到限制以内
+    private func applyMaxDimensions(to processed: ProcessedPhoto) -> ProcessedPhoto {
+        guard maxWidthForImage > 0, maxHeightForImage > 0,
+              processed.width > maxWidthForImage || processed.height > maxHeightForImage else {
+            return processed
+        }
+        guard let img = UIImage(contentsOfFile: processed.deliveryPath) else { return processed }
+        let scale = min(CGFloat(maxWidthForImage) / CGFloat(processed.width),
+                        CGFloat(maxHeightForImage) / CGFloat(processed.height),
+                        1.0)
+        let newW = max(1, Int(CGFloat(processed.width) * scale))
+        let newH = max(1, Int(CGFloat(processed.height) * scale))
+        guard let resized = resizeImage(img, targetWidth: newW, targetHeight: newH),
+              let data = resized.jpegData(compressionQuality: 0.9) else { return processed }
+        let fileName = "hx_maxdim_\(UUID().uuidString).jpg"
+        let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent(fileName)
+        do {
+            try data.write(to: fileURL, options: .atomic)
+            let newSize = fileSize(at: fileURL)
+            return ProcessedPhoto(
+                originalPath: processed.originalPath,
+                originalSize: processed.originalSize,
+                originalWidth: processed.originalWidth,
+                originalHeight: processed.originalHeight,
+                deliveryPath: fileURL.path,
+                width: newW,
+                height: newH,
+                size: newSize,
+                compressed: processed.compressed
+            )
+        } catch {
+            return processed
+        }
     }
 }

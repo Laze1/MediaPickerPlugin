@@ -32,6 +32,8 @@ class _MyAppState extends State<MyApp> {
         mimeType: mimeType,
         maxSelectNum: maxSelectNum,
         gridCount: 3,
+        maxWidth: 1080,
+        maxHeight: 1080,
       );
 
       setState(() {

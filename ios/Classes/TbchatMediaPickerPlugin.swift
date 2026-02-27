@@ -19,10 +19,12 @@ public class TbchatMediaPickerPlugin: NSObject, FlutterPlugin {
       let maxSelectNum = args?["maxSelectNum"] as? Int ?? 1
       let maxSize = args?["maxSize"] as? Int ?? 0
       let gridCount = args?["gridCount"] as? Int ?? 4
+      let maxWidth = args?["maxWidth"] as? Int ?? 0
+      let maxHeight = args?["maxHeight"] as? Int ?? 0
       if bridge == nil {
         bridge = HXPhotoPickerBridge()
       }
-      bridge?.pickMedia(mimeType: mimeType, maxSelectNum: maxSelectNum, maxSize: maxSize, gridCount: gridCount, result: result)
+      bridge?.pickMedia(mimeType: mimeType, maxSelectNum: maxSelectNum, maxSize: maxSize, gridCount: gridCount, maxWidth: maxWidth, maxHeight: maxHeight, result: result)
     default:
       result(FlutterMethodNotImplemented)
     }
