@@ -25,12 +25,13 @@ abstract class TbchatMediaPickerPlatform extends PlatformInterface {
   }
 
   Future<List<MediaEntity>> pickMedia({
-    int mimeType = 0, // 0: all (image and video), 1: image, 2: video
+    int mimeType = 0,
     int maxSelectNum = 1,
     int maxSize = 0,
-    int gridCount = 4, // 选择器每排显示数量（网格列数）
-    int maxWidth = 0, // 图片最大宽度限制，0=不限制
-    int maxHeight = 0, // 图片最大高度限制，0=不限制
+    int gridCount = 4,
+    int maxWidth = 0,
+    int maxHeight = 0,
+    int language = 0, // 0: system, 1: simplifiedChinese, 2: traditionalChinese, 3: english（仅 iOS）
   }) {
     throw UnimplementedError('pickMedia() has not been implemented.');
   }

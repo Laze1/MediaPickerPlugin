@@ -40,21 +40,16 @@ final class HXPhotoPickerBridge: NSObject {
     ///   - gridCount: 选择器每排（每行）显示数量，默认 4。
     ///   - maxWidth: 图片最大宽度限制，0 表示不限制。
     ///   - maxHeight: 图片最大高度限制，0 表示不限制。
+    ///   - language: 0=跟随系统，1=简体中文，2=繁体中文，3=英语。
     ///   - result: Flutter 回调，成功时传入 JSON 数组字符串，取消传 "[]"，失败传 FlutterError。
-    /// Flutter 入口方法：确保在主线程展示系统 UI。
-    /// HXPhotoPicker 依赖 UIKit，必须在主线程调用。
-    func pickMedia(mimeType: Int, maxSelectNum: Int, maxSize: Int, gridCount: Int, maxWidth: Int = 0, maxHeight: Int = 0, result: @escaping FlutterResult) {
+    func pickMedia(mimeType: Int, maxSelectNum: Int, maxSize: Int, gridCount: Int, maxWidth: Int = 0, maxHeight: Int = 0, language: Int = 0, result: @escaping FlutterResult) {
         DispatchQueue.main.async { [weak self] in
-            self?.performPick(mimeType: mimeType, maxSelectNum: maxSelectNum, maxSize: maxSize, gridCount: gridCount, maxWidth: maxWidth, maxHeight: maxHeight, result: result)
+            self?.performPick(mimeType: mimeType, maxSelectNum: maxSelectNum, maxSize: maxSize, gridCount: gridCount, maxWidth: maxWidth, maxHeight: maxHeight, language: language, result: result)
         }
     }
 
     /// 真实的选择器初始化与弹出逻辑。
-    /// 这里做三件事：
-    /// 1) 兜底参数与并发保护
-    /// 2) 组装 HXPhotoPicker 配置
-    /// 3) 绑定完成/取消回调
-    private func performPick(mimeType: Int, maxSelectNum: Int, maxSize: Int, gridCount: Int, maxWidth: Int = 0, maxHeight: Int = 0, result: @escaping FlutterResult) {
+    private func performPick(mimeType: Int, maxSelectNum: Int, maxSize: Int, gridCount: Int, maxWidth: Int = 0, maxHeight: Int = 0, language: Int = 0, result: @escaping FlutterResult) {
         if flutterResult != nil {
             result(FlutterError(code: "PICK_IN_PROGRESS", message: "Another pickMedia call is in progress", details: nil))
             return
@@ -83,6 +78,9 @@ final class HXPhotoPickerBridge: NSObject {
 
         // 相册内不展示拍照按钮（仅从相册选择）
         config.photoList.allowAddCamera = false
+
+        // 语言设置：0=跟随系统，1=简体中文，2=繁体中文，3=英语
+        config.languageType = HXPhotoPickerBridge.languageType(from: language)
 
         // 弹出选择器：成功回调走资源导出/组装，取消回调直接返回空数组
         Photo.picker(config) { [weak self] result, pickerController in
@@ -232,6 +230,16 @@ final class HXPhotoPickerBridge: NSObject {
     /// - Parameter pickerController: 对应的 PhotoPickerController
     func pickerController(didCancel pickerController: PhotoPickerController) {
         finishWithItems([])
+    }
+
+    /// 将 Flutter 的 language 数字映射为 HXPhotoPicker 的 LanguageType。
+    private static func languageType(from language: Int) -> LanguageType {
+        switch language {
+        case 1: return .simplifiedChinese
+        case 2: return .traditionalChinese
+        case 3: return .english
+        default: return .system
+        }
     }
 
     /// 将 Flutter 的 mimeType 数字映射为 HXPhotoPicker 的 PickerAssetOptions。

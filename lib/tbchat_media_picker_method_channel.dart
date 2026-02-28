@@ -20,6 +20,7 @@ class MethodChannelTbchatMediaPicker extends TbchatMediaPickerPlatform {
     int gridCount = 4,
     int maxWidth = 0,
     int maxHeight = 0,
+    int language = 0,
   }) async {
     final result = await methodChannel.invokeMethod<String>(
       'pickMedia',
@@ -30,6 +31,7 @@ class MethodChannelTbchatMediaPicker extends TbchatMediaPickerPlatform {
         'gridCount': gridCount,
         'maxWidth': maxWidth,
         'maxHeight': maxHeight,
+        'language': language,
       },
     );
     
