@@ -1,8 +1,13 @@
 import Flutter
 import UIKit
 
+/// Flutter 媒体选择插件（iOS 端）入口.
+///
+/// 通过 MethodChannel "tbchat_media_picker" 接收 pickMedia 调用，
+/// 委托 [HXPhotoPickerBridge] 弹出相册选择器并处理选择结果.
 public class TbchatMediaPickerPlugin: NSObject, FlutterPlugin {
-  /// 强引用桥接对象，避免被 ARC 释放导致选择器不弹出
+
+  /// 强引用桥接对象，避免被 ARC 释放导致选择器无法弹出
   private var bridge: HXPhotoPickerBridge?
 
   public static func register(with registrar: FlutterPluginRegistrar) {
@@ -11,6 +16,7 @@ public class TbchatMediaPickerPlugin: NSObject, FlutterPlugin {
     registrar.addMethodCallDelegate(instance, channel: channel)
   }
 
+  /// 处理 Flutter 侧方法调用，仅支持 "pickMedia"
   public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
     switch call.method {
     case "pickMedia":

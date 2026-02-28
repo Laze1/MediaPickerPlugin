@@ -1,13 +1,12 @@
 // MARK: - HXPhotoPickerBridge
 //
-// 将 HXPhotoPicker 与 Flutter 桥接：弹出相册选择器，将用户选中的图片/视频导出为本地文件，
-// 并组装成与 Android PictureSelector 一致的 JSON 结构，通过 Method Channel 返回给 Flutter。
-// 字段与 MediaEntity.fromMap 一一对应，保证双端数据结构统一。
+// 将 HXPhotoPicker 与 Flutter 桥接：弹出相册选择器，导出选中资源并组装 JSON，
+// 字段与 Dart 端 MediaEntity.fromMap 一一对应，保证双端数据结构统一。
 //
-// 图片处理规则（仅图片，视频不处理）：
-// - 未选原图：对图片进行压缩（JPEG 质量 0.6，长边最大 1280），path=原图路径，compressPath=压缩图路径，compressed=true。
-// - 选原图且分辨率 > 1000 万像素：缩小到 ≤1000 万像素后写入临时文件，path=缩小后路径，compressPath=""，compressed=false。
-// - 选原图且分辨率 ≤ 1000 万：不处理，path=导出路径，compressPath=""，compressed=false。
+// ## 图片处理规则
+// - 未选原图：JPEG 质量 0.6 压缩，长边最大 1280，与 Luban 逻辑一致
+// - 选原图且 >1000 万像素：缩放到 ≤1000 万，写入临时文件
+// - 选原图且 ≤1000 万：不处理，直接使用原图
 
 import Flutter
 import UIKit
@@ -19,18 +18,29 @@ import HXPhotoPicker
 
 /// HXPhotoPicker 与 Flutter 的桥接类：负责弹出选择器、导出资源、组装 JSON 并回调 result。
 final class HXPhotoPickerBridge: NSObject {
-    /// 保存 Flutter 端传入的 result 闭包，在用户完成选择或取消后调用一次并置空。
+
+    // MARK: - State
+
+    /// Flutter 回调，选择完成或取消后调用一次并置空
     private var flutterResult: FlutterResult?
-    /// 最大文件大小（字节），用于过滤超出大小的资源；0 表示不限制，此处会转为 1GB。
+    /// 最大文件大小（字节），用于过滤超出大小的资源；0 表示不限制，转为 1GB
     private var maxSizeBytes: Int = 0
-    /// 当前选择的媒体类型：0=图片+视频，1=仅图片，2=仅视频
+    /// 当前媒体类型：0=图片+视频，1=仅图片，2=仅视频
     private var currentMimeType: Int = 0
     /// 图片最大宽度限制，0 表示不限制
     private var maxWidthForImage: Int = 0
     /// 图片最大高度限制，0 表示不限制
     private var maxHeightForImage: Int = 0
-    /// Loading 遮罩视图，添加到 key window 的 rootViewController.view 上
+    /// Loading 遮罩视图，添加到 key window
     private weak var loadingOverlay: UIView?
+
+    // MARK: - Constants
+
+    private static let maxSizeUnlimited = 1024 * 1024 * 1024   // 1GB
+    private static let maxPixelsOriginal = 10_000_000          // 1000 万像素
+    private static let compressQuality: CGFloat = 0.6          // 与 Luban JPEG 质量 60 一致
+
+    // MARK: - Public Entry
 
     /// 入口：打开媒体选择器。
     /// - Parameters:
@@ -48,7 +58,9 @@ final class HXPhotoPickerBridge: NSObject {
         }
     }
 
-    /// 真实的选择器初始化与弹出逻辑。
+    // MARK: - Picker Lifecycle
+
+    /// 选择器初始化与弹出：参数校验、并发保护、配置 HXPhotoPicker、绑定回调
     private func performPick(mimeType: Int, maxSelectNum: Int, maxSize: Int, gridCount: Int, maxWidth: Int = 0, maxHeight: Int = 0, language: Int = 0, result: @escaping FlutterResult) {
         if flutterResult != nil {
             result(FlutterError(code: "PICK_IN_PROGRESS", message: "Another pickMedia call is in progress", details: nil))
@@ -59,8 +71,7 @@ final class HXPhotoPickerBridge: NSObject {
         currentMimeType = mimeType
         maxWidthForImage = maxWidth
         maxHeightForImage = maxHeight
-        // maxSize=0 表示不限制，这里约定为 1GB 以便与 Android 行为一致
-        maxSizeBytes = maxSize > 0 ? maxSize : 1024 * 1024 * 1024
+        maxSizeBytes = maxSize > 0 ? maxSize : Self.maxSizeUnlimited
 
         // HXPhotoPicker 基础配置：选择模式、可选资源类型与数量限制
         var config = PickerConfiguration.default
@@ -90,12 +101,7 @@ final class HXPhotoPickerBridge: NSObject {
         }
     }
 
-    /// 选择完成之后调用
-    /// - Parameters:
-    ///   - pickerController: 对应的 PhotoPickerController
-    ///   - result: 选择的结果
-    ///     result.photoAssets  选择的资源数组
-    ///     result.isOriginal   是否选中原图
+    /// 选择完成：显示 loading → getURLs 导出资源 → 后台处理图片 → 过滤空项 → 回调 Flutter
     func pickerController(
         _ pickerController: PhotoPickerController, 
         didFinishSelection result: PickerResult
@@ -138,75 +144,13 @@ final class HXPhotoPickerBridge: NSObject {
                 }
 
                 if mediaType == .photo {
-                    // 图片处理放后台队列，避免阻塞主线程，保证 loading 正常转动
-                    group.enter()
-                    DispatchQueue.global(qos: .userInitiated).async {
-                        defer { group.leave() }
-                        guard let processed = self.processPhotoImage(sourceURL: url, isOriginal: isOriginal) else {
-                            return
-                        }
-                        let mimeType = self.mimeType(for: URL(fileURLWithPath: processed.deliveryPath), mediaType: mediaType)
-                        let fileName = (processed.deliveryPath as NSString).lastPathComponent
-                        let map: [String: Any] = [
-                            "id": index + 1,
-                            "originalPath": processed.originalPath,
-                            "originalSize": processed.originalSize,
-                            "originalWidth": processed.originalWidth,
-                            "originalHeight": processed.originalHeight,
-                            "path": processed.deliveryPath,
-                            "size": processed.size,
-                            "width": processed.width,
-                            "height": processed.height,
-                            "cutPath": "",
-                            "watermarkPath": "",
-                            "videoThumbnailPath": "",
-                            "sandboxPath": processed.deliveryPath,
-                            "duration": 0,
-                            "isCut": false,
-                            "mimeType": mimeType,
-                            "compressed": processed.compressed,
-                            "isOriginal": isOriginal,
-                            "fileName": fileName
-                        ]
-                        syncQueue.async {
-                            if index < items.count { items[index] = map }
-                        }
+                    handlePhotoAsset(url: url, index: index, isOriginal: isOriginal, group: group, syncQueue: syncQueue) { i, m in
+                        if i < items.count { items[i] = m }
                     }
                     return
                 }
-
-                // 视频：不做压缩/降分辨率，仅导出路径与缩略图
-                group.enter()
-                let path = url.path
-                let mimeType = self.mimeType(for: url, mediaType: mediaType)
-                let fileName = url.lastPathComponent
-                let (width, height) = self.mediaDimensions(for: url, mediaType: mediaType)
-                let duration = self.videoDuration(for: url)
-                let videoThumbPath = self.createVideoThumbnail(for: url) ?? ""
-                let map: [String: Any] = [
-                    "id": index + 1,
-                    "originalPath": path,
-                    "originalSize": size,
-                    "originalWidth": width,
-                    "originalHeight": height,
-                    "path": path,
-                    "size": size,
-                    "width": width,
-                    "height": height,
-                    "cutPath": "",
-                    "watermarkPath": "",
-                    "videoThumbnailPath": videoThumbPath,
-                    "sandboxPath": path,
-                    "duration": duration,
-                    "isCut": false,
-                    "mimeType": mimeType,
-                    "compressed": false,
-                    "isOriginal": result.isOriginal,
-                    "fileName": fileName
-                ]
-                syncQueue.async {
-                    if index < items.count { items[index] = map }
-                    group.leave()
+                handleVideoAsset(url: url, index: index, size: size, isOriginal: result.isOriginal, group: group, syncQueue: syncQueue) { i, m in
+                    if i < items.count { items[i] = m }
                 }
             case .failure:
                 break
@@ -226,13 +170,96 @@ final class HXPhotoPickerBridge: NSObject {
         )
     }
     
-    /// 点击取消时调用
-    /// - Parameter pickerController: 对应的 PhotoPickerController
+    /// 用户取消选择：直接返回空数组 "[]"
     func pickerController(didCancel pickerController: PhotoPickerController) {
         finishWithItems([])
     }
 
-    /// 将 Flutter 的 language 数字映射为 HXPhotoPicker 的 LanguageType。
+    // MARK: - Media Handlers
+
+    /// 处理图片资源：后台线程压缩/缩放，通过 writeItem 写入 items
+    private func handlePhotoAsset(url: URL, index: Int, isOriginal: Bool, group: DispatchGroup, syncQueue: DispatchQueue, writeItem: @escaping (Int, [String: Any]) -> Void) {
+        group.enter()
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            defer { group.leave() }
+            guard let self else { return }
+            guard let processed = self.processPhotoImage(sourceURL: url, isOriginal: isOriginal) else { return }
+            let map = self.buildPhotoMediaMap(processed: processed, index: index, isOriginal: isOriginal)
+            syncQueue.async { writeItem(index, map) }
+        }
+    }
+
+    /// 处理视频资源：不压缩，仅导出路径、尺寸、时长、缩略图
+    private func handleVideoAsset(url: URL, index: Int, size: Int, isOriginal: Bool, group: DispatchGroup, syncQueue: DispatchQueue, writeItem: @escaping (Int, [String: Any]) -> Void) {
+        group.enter()
+        let path = url.path
+        let mimeStr = mimeType(for: url, mediaType: .video)
+        let fileName = url.lastPathComponent
+        let (width, height) = mediaDimensions(for: url, mediaType: .video)
+        let duration = videoDuration(for: url)
+        let videoThumbPath = createVideoThumbnail(for: url) ?? ""
+        let map = buildVideoMediaMap(path: path, size: size, width: width, height: height, duration: duration, videoThumbnailPath: videoThumbPath, mimeType: mimeStr, fileName: fileName, index: index, isOriginal: isOriginal)
+        syncQueue.async {
+            writeItem(index, map)
+            group.leave()
+        }
+    }
+
+    /// 构建图片 MediaEntity map，字段与 Dart MediaEntity.fromMap 对应
+    private func buildPhotoMediaMap(processed: ProcessedPhoto, index: Int, isOriginal: Bool) -> [String: Any] {
+        let mime = mimeType(for: URL(fileURLWithPath: processed.deliveryPath), mediaType: .photo)
+        let fileName = (processed.deliveryPath as NSString).lastPathComponent
+        return [
+            "id": index + 1,
+            "originalPath": processed.originalPath,
+            "originalSize": processed.originalSize,
+            "originalWidth": processed.originalWidth,
+            "originalHeight": processed.originalHeight,
+            "path": processed.deliveryPath,
+            "size": processed.size,
+            "width": processed.width,
+            "height": processed.height,
+            "cutPath": "",
+            "watermarkPath": "",
+            "videoThumbnailPath": "",
+            "sandboxPath": processed.deliveryPath,
+            "duration": 0,
+            "isCut": false,
+            "mimeType": mime,
+            "compressed": processed.compressed,
+            "isOriginal": isOriginal,
+            "fileName": fileName
+        ]
+    }
+
+    /// 构建视频 MediaEntity map，字段与 Dart MediaEntity.fromMap 对应
+    private func buildVideoMediaMap(path: String, size: Int, width: Int, height: Int, duration: Int, videoThumbnailPath: String, mimeType: String, fileName: String, index: Int, isOriginal: Bool) -> [String: Any] {
+        [
+            "id": index + 1,
+            "originalPath": path,
+            "originalSize": size,
+            "originalWidth": width,
+            "originalHeight": height,
+            "path": path,
+            "size": size,
+            "width": width,
+            "height": height,
+            "cutPath": "",
+            "watermarkPath": "",
+            "videoThumbnailPath": videoThumbnailPath,
+            "sandboxPath": path,
+            "duration": duration,
+            "isCut": false,
+            "mimeType": mimeType,
+            "compressed": false,
+            "isOriginal": isOriginal,
+            "fileName": fileName
+        ]
+    }
+
+    // MARK: - Config Helpers
+
+    /// Flutter language 参数映射为 HXPhotoPicker LanguageType：0=系统，1=简体，2=繁体，3=英语
     private static func languageType(from language: Int) -> LanguageType {
         switch language {
         case 1: return .simplifiedChinese
@@ -242,7 +269,7 @@ final class HXPhotoPickerBridge: NSObject {
         }
     }
 
-    /// 将 Flutter 的 mimeType 数字映射为 HXPhotoPicker 的 PickerAssetOptions。
+    /// Flutter mimeType 映射为 HXPhotoPicker PickerAssetOptions：0=全部，1=仅图片，2=仅视频
     private static func selectOptions(from mimeType: Int) -> PickerAssetOptions {
         switch mimeType {
         case 1: return .photo
@@ -251,7 +278,7 @@ final class HXPhotoPickerBridge: NSObject {
         }
     }
 
-    /// 将当前选择模式转成具体的媒体类型过滤规则。
+    /// 根据 currentMimeType 过滤媒体类型：1=仅图片，2=仅视频，0=全部
     private func isAllowed(mediaType: PhotoAsset.MediaType) -> Bool {
         switch currentMimeType {
         case 1:
@@ -263,8 +290,9 @@ final class HXPhotoPickerBridge: NSObject {
         }
     }
 
-    /// 将数组序列化为 JSON 字符串并回调 Flutter。
-    /// 注意：该方法只允许调用一次（调用后会清空 flutterResult）。
+    // MARK: - Result & Utils
+
+    /// 将 items 序列化为 JSON 字符串并回调 Flutter；调用后清空 flutterResult 防止重复回调
     private func finishWithItems(_ items: [[String: Any]]) {
         guard let flutterResult else { return }
         self.flutterResult = nil
@@ -277,7 +305,7 @@ final class HXPhotoPickerBridge: NSObject {
         }
     }
 
-    /// 获取本地文件大小（字节）。非 fileURL 直接返回 0。
+    /// 获取本地文件大小（字节）；非 fileURL 返回 0
     private func fileSize(at url: URL) -> Int {
         guard url.isFileURL else { return 0 }
         do {
@@ -288,7 +316,7 @@ final class HXPhotoPickerBridge: NSObject {
         }
     }
 
-    /// 由文件扩展名推导 MIMEType；若无法识别则按媒体类型给默认值。
+    /// 由文件扩展名推导 MIME 类型；无法识别时按 mediaType 给默认 image/jpeg 或 video/mp4
     private func mimeType(for url: URL, mediaType: PhotoAsset.MediaType) -> String {
         let ext = url.pathExtension.lowercased()
         if !ext.isEmpty {
@@ -318,6 +346,7 @@ final class HXPhotoPickerBridge: NSObject {
         }
     }
 
+    /// 获取媒体尺寸：图片从 UIImage，视频从 AVAsset 轨道（考虑旋转）
     private func mediaDimensions(for url: URL, mediaType: PhotoAsset.MediaType) -> (Int, Int) {
         switch mediaType {
         case .photo:
@@ -365,12 +394,9 @@ final class HXPhotoPickerBridge: NSObject {
         }
     }
 
-    // MARK: - 图片处理（与 Android Luban Engine.computeSize 逻辑一致）
+    // MARK: - Image Processing (Luban-aligned)
 
-    private static let maxPixelsOriginal: Int = 10_000_000  // 1000 万像素
-    private static let compressQuality: CGFloat = 0.6       // 与 Luban JPEG 质量 60 一致
-
-    /// 与 Luban Engine.computeSize() 一致的采样倍数：1=不缩小，2=宽高各减半，4=1/4，或按 1280 基准
+    /// 与 Luban Engine.computeSize() 一致的采样倍数：1=不缩小，2=宽高减半，4=1/4，或按长边 1280 基准
     private func computeSampleSize(srcW: Int, srcH: Int) -> Int {
         let w = srcW % 2 == 1 ? srcW + 1 : srcW
         let h = srcH % 2 == 1 ? srcH + 1 : srcH
@@ -391,6 +417,7 @@ final class HXPhotoPickerBridge: NSObject {
         }
     }
 
+    /// 图片处理结果：原图路径、交付路径（压缩/缩放/原图）、尺寸信息
     private struct ProcessedPhoto {
         /// 原图路径（始终为导出源路径或复制后的原图路径）
         var originalPath: String
@@ -408,7 +435,7 @@ final class HXPhotoPickerBridge: NSObject {
         var compressed: Bool
     }
 
-    /// 根据是否原图对图片做压缩或降分辨率，写入临时文件并返回路径与尺寸信息。
+    /// 根据是否原图做压缩或降分辨率：未选原图→Luban 逻辑压缩；选原图且>1000万像素→缩放；否则不处理
     private func processPhotoImage(sourceURL: URL, isOriginal: Bool) -> ProcessedPhoto? {
         guard let image = UIImage(contentsOfFile: sourceURL.path) else { return nil }
         let srcW = Int(image.size.width * image.scale)
@@ -514,8 +541,10 @@ final class HXPhotoPickerBridge: NSObject {
         }
     }
 
-    /// 在处理/缩放期间显示 loading，与 Android 一致：透明背景，仅居中 loading 指示器，无边框
-    /// 添加到当前 key window 上，不新建 UIWindow。需在主线程同步调用，确保在 getURLs 前立即显示
+    // MARK: - Loading Overlay
+
+    /// 在处理/缩放期间显示 loading：透明背景，居中 spinner
+    /// 添加到 present 了 picker 的 window，需在主线程同步调用
     private func showLoadingOverlay(in pickerController: PhotoPickerController) {
         self.loadingOverlay?.removeFromSuperview()
         self.loadingOverlay = nil
@@ -552,6 +581,7 @@ final class HXPhotoPickerBridge: NSObject {
         self.loadingOverlay = overlay
     }
 
+    /// 隐藏 loading 遮罩，主线程安全
     private func hideLoadingOverlay() {
         DispatchQueue.main.async { [weak self] in
             self?.loadingOverlay?.removeFromSuperview()
@@ -559,6 +589,7 @@ final class HXPhotoPickerBridge: NSObject {
         }
     }
 
+    /// 缩放图片到目标宽高
     private func resizeImage(_ image: UIImage, targetWidth: Int, targetHeight: Int) -> UIImage? {
         let width = targetWidth
         let height = targetHeight
@@ -569,7 +600,7 @@ final class HXPhotoPickerBridge: NSObject {
         return UIGraphicsGetImageFromCurrentImageContext()
     }
 
-    /// 当设置了 maxWidth/maxHeight 且交付图超限时，缩放到限制以内
+    /// 当设置了 maxWidth/maxHeight 且交付图宽高超限时，缩放到限制以内
     private func applyMaxDimensions(to processed: ProcessedPhoto) -> ProcessedPhoto {
         guard maxWidthForImage > 0, maxHeightForImage > 0,
               processed.width > maxWidthForImage || processed.height > maxHeightForImage else {

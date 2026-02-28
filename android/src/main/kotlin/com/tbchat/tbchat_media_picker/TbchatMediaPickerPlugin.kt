@@ -1,23 +1,16 @@
 package com.tbchat.tbchat_media_picker
 
 import android.app.Activity
-import android.app.Dialog
 import android.content.Context
-import android.graphics.Color
-import android.os.Handler
-import android.os.Looper
-import android.view.Gravity
-import android.widget.FrameLayout
-import android.widget.ProgressBar
 import android.graphics.Bitmap
 import android.media.MediaMetadataRetriever
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import com.luck.picture.lib.basic.PictureSelector
-import com.luck.picture.lib.config.SelectMimeType
-import com.luck.picture.lib.language.LanguageConfig
-import com.luck.picture.lib.config.SelectModeConfig
 import com.luck.picture.lib.engine.CompressFileEngine
+import com.luck.picture.lib.language.LanguageConfig
 import com.luck.picture.lib.entity.LocalMedia
 import com.luck.picture.lib.interfaces.OnResultCallbackListener
 import io.flutter.embedding.engine.plugins.FlutterPlugin
@@ -27,36 +20,41 @@ import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.common.MethodChannel.MethodCallHandler
 import io.flutter.plugin.common.MethodChannel.Result
+import org.json.JSONArray
+import top.zibin.luban.Luban
+import top.zibin.luban.OnNewCompressListener
 import java.io.File
 import java.io.FileOutputStream
 import java.io.OutputStream
 import java.util.ArrayList
 import java.util.UUID
-import org.json.JSONArray
-import org.json.JSONObject
-import top.zibin.luban.Luban
-import top.zibin.luban.OnNewCompressListener
 
 /**
  * Flutter 媒体选择插件（Android 端）.
  *
- * 通过 MethodChannel "tbchat_media_picker" 与 Flutter 通信，使用本地 PictureSelector 打开相册，
- * 支持图片/视频选择、压缩（Luban / 大图安全压缩）、视频首帧缩略图，并将结果序列化为 JSON 数组回传， 与 [MediaEntity] 字段一一对应。
+ * ## 职责
+ * - 通过 MethodChannel "tbchat_media_picker" 与 Flutter 通信
+ * - 使用 PictureSelector 打开系统相册，支持图片/视频选择
+ * - 图片压缩：>10MB 用 SafeImageCompressor 避免 OOM，≤10MB 用 Luban
+ * - 视频首帧缩略图生成
+ * - 将选择结果序列化为 JSON，字段与 Dart 端 [MediaEntity.fromMap] 对应
  *
- * 压缩规则：
- * - 未选原图：图片 &gt; 10MB 用 [SafeImageCompressor] 安全压缩，≤10MB 用 Luban；返回 compressPath，compressed=true。
- * - 选原图：不压缩；仅当图片 &gt;1000 万像素时做像素缩放到 ≤1000 万（[resizeToMaxPixels]），path 为缩放后路径，无 compressPath。
+ * ## 压缩规则
+ * - 未选原图：压缩后 path=compressPath，compressed=true
+ * - 选原图且 >1000 万像素：仅缩放到 ≤1000 万，path 为缩放后路径
+ * - 选原图且 ≤1000 万：不处理
  */
 class TbchatMediaPickerPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
 
-    /** 与 Flutter 通信的 MethodChannel，名称需与 Dart 端一致 */
+    /** MethodChannel，需与 Dart 端 "tbchat_media_picker" 一致 */
     private lateinit var channel: MethodChannel
 
-    /** 当前 Flutter 宿主 Activity，用于 present 选择器；由 ActivityAware 在 attach/detach 时赋值 */
+    /** 当前 Flutter Activity，由 ActivityAware 绑定；用于 present 选择器 */
     private var activity: Activity? = null
 
-    /** pickMedia 的异步回调，在用户完成选择或取消后调用一次并置空，避免重复回调 */
-    @Suppress("UNCHECKED_CAST") private var pendingResult: Result? = null
+    /** pickMedia 异步回调；选择完成或取消后调用一次并置空，防止重复回调 */
+    @Suppress("UNCHECKED_CAST")
+    private var pendingResult: Result? = null
 
     override fun onAttachedToEngine(flutterPluginBinding: FlutterPlugin.FlutterPluginBinding) {
         channel = MethodChannel(flutterPluginBinding.binaryMessenger, "tbchat_media_picker")
@@ -65,340 +63,168 @@ class TbchatMediaPickerPlugin : FlutterPlugin, MethodCallHandler, ActivityAware 
 
     /**
      * 处理 Flutter 侧方法调用.
-     * - pickMedia: 打开相册选择图片/视频，参数 mimeType/maxSelectNum/maxSize，结果通过 pendingResult 回传 JSON 数组或错误.
+     * 仅支持 "pickMedia"；其他方法返回 notImplemented.
      */
     override fun onMethodCall(call: MethodCall, result: Result) {
-        if (call.method == "pickMedia") {
-            if (activity == null) {
-                result.error("NO_ACTIVITY", "Activity is not available", null)
-                return
-            }
-
-            pendingResult = result
-
-            // 解析参数
-            val args = call.arguments as? Map<*, *> ?: emptyMap<Any, Any>()
-            val mimeType = args["mimeType"] as? Int ?: 0 // 0: 全部(图+视频), 1: 仅图片, 2: 仅视频
-            val maxSelectNum = args["maxSelectNum"] as? Int ?: 1
-            var maxSize = args["maxSize"] as? Long ?: 0L
-            val gridCount = args["gridCount"] as? Int ?: 4 // 每排显示数量，默认 4
-            val maxWidth = args["maxWidth"] as? Int ?: 0 // 图片最大宽度限制，0=不限制
-            val maxHeight = args["maxHeight"] as? Int ?: 0 // 图片最大高度限制，0=不限制
-            val language = args["language"] as? Int ?: 0 // 0=跟随系统，1=简体中文，2=繁体中文，3=英语
-
-            try {
-                val mediaType =
-                        when (mimeType) {
-                            1 -> SelectMimeType.TYPE_IMAGE
-                            2 -> SelectMimeType.TYPE_VIDEO
-                            else -> SelectMimeType.TYPE_ALL
-                        }
-                val selectionMode =
-                        if (maxSelectNum > 1) SelectModeConfig.MULTIPLE else SelectModeConfig.SINGLE
-
-                if (maxSize == 0L) {
-                    maxSize = 1024 * 1024 * 1024L // 0 表示不限制，此处按 1GB 处理
-                }
-
-                // 语言设置：0=跟随系统，1=简体中文，2=繁体中文，3=英语
-                val pictureLanguage = when (language) {
-                    1 -> LanguageConfig.CHINESE
-                    2 -> LanguageConfig.TRADITIONAL_CHINESE
-                    3 -> LanguageConfig.ENGLISH
-                    else -> LanguageConfig.SYSTEM_LANGUAGE
-                }
-                PictureSelector.create(activity!!)
-                        .openGallery(mediaType)
-                        .setSelectionMode(selectionMode)
-                        .setImageEngine(GlideEngine.createGlideEngine())
-                        .setLanguage(pictureLanguage) //设置相册语言
-                        .setImageSpanCount(if (gridCount > 0) gridCount else 4) // 每排显示数量
-                        .setMaxSelectNum(maxSelectNum) // 设置图片最大选择数量
-                        .setMaxVideoSelectNum(maxSelectNum) // 设置视频最大选择数量
-                        .isWithSelectVideoImage(true) // 支持图片视频同选
-                        .isOriginalControl(true) // 原图选项
-                        .isOriginalSkipCompress(true) // 选原图时不走压缩引擎，仅做 >10M 像素缩放
-                        .isDisplayCamera(false) // 不显示相机
-                        .setSelectMaxFileSize(maxSize) // 设置最大选择大小
-                        .isPageStrategy(true, 40) // 分页模式，每页10条
-                        .isFilterSizeDuration(true) // 过滤视频小于1秒和文件小于1kb
-                        .isGif(true) // 是否显示gif文件
-                        .isWebp(true) // 是否显示webp文件
-                        .isBmp(true) // 是否显示bmp文件
-                        .setVideoThumbnailListener { context, videoPath, thumbnailCallback ->
-                            thumbnailCallback?.onCallback(
-                                    videoPath,
-                                    getVideoThumbnail(context!!, videoPath!!)
-                            )
-                        }
-                        .setCompressEngine(
-                                CompressFileEngine { context, source, compressCallback ->
-                                    fun uriToPath(uri: Uri): String =
-                                        if (uri.scheme == "content") uri.toString() else (uri.path ?: uri.toString())
-
-                                    val smallUris = ArrayList<Uri>()
-                                    for (uri in source) {
-                                        val path = uriToPath(uri)
-                                        val size = SafeImageCompressor.getSourceSize(context, path)
-                                        if (size > SafeImageCompressor.LARGE_IMAGE_THRESHOLD_BYTES) {
-                                            // 大图（>10MB）：子线程安全压缩，避免 OOM；callback 必须回到主线程，
-                                            // 否则 PictureSelector 内部会因 "Can't create handler inside thread that has not called Looper.prepare()" 崩溃
-                                            val mainHandler = Handler(Looper.getMainLooper())
-                                            Thread {
-                                                try {
-                                                    val resultPath = SafeImageCompressor.compress(
-                                                            context,
-                                                            path,
-                                                            context.cacheDir,
-                                                            SafeImageCompressor.DEFAULT_MAX_SIDE_PX,
-                                                            SafeImageCompressor.DEFAULT_QUALITY
-                                                    )
-                                                    mainHandler.post { compressCallback?.onCallback(path, resultPath) }
-                                                } catch (e: Exception) {
-                                                    Log.e("TbchatMediaPickerPlugin", "Safe compress failed: ${e.message}")
-                                                    mainHandler.post { compressCallback?.onCallback(path, null) }
-                                                }
-                                            }.start()
-                                        } else {
-                                            smallUris.add(uri)
-                                        }
-                                    }
-                                    if (smallUris.isNotEmpty()) {
-                                        Luban.with(context)
-                                            .load(smallUris)
-                                            .setTargetDir(context.cacheDir.path)
-                                            .setCompressListener(
-                                                    object : OnNewCompressListener {
-                                                        override fun onStart() {}
-                                                        override fun onSuccess(
-                                                                src: String?,
-                                                                compressFile: File?
-                                                        ) {
-                                                            compressCallback?.onCallback(
-                                                                    src,
-                                                                    compressFile?.absolutePath
-                                                            )
-                                                        }
-
-                                                        override fun onError(
-                                                                src: String?,
-                                                                e: Throwable?
-                                                        ) {
-                                                            compressCallback?.onCallback(src, null)
-                                                        }
-                                                    }
-                                            )
-                                            .launch()
-                                    }
-                                }
-                        )
-                        .forResult(
-                                object : OnResultCallbackListener<LocalMedia> {
-                                    override fun onResult(result: ArrayList<LocalMedia>) {
-                                        Log.d("TbchatMediaPickerPlugin", "onResult: $result")
-                                        handleSelectionResult(result, maxWidth, maxHeight)
-                                    }
-
-                                    override fun onCancel() {
-                                        pendingResult?.success(JSONArray().toString())
-                                        pendingResult = null
-                                    }
-                                }
-                        )
-            } catch (e: Exception) {
-                pendingResult?.error(
-                        "PICK_ERROR",
-                        "Failed to open media picker: ${e.message}",
-                        null
-                )
-                pendingResult = null
-            }
-        } else {
+        if (call.method != "pickMedia") {
             result.notImplemented()
+            return
         }
-    }
+        if (activity == null) {
+            result.error("NO_ACTIVITY", "Activity is not available", null)
+            return
+        }
 
-    /**
-     * 将 PictureSelector 返回的 [LocalMedia] 列表转成 JSON 数组字符串并回传 Flutter. 字段与 Dart 端 MediaEntity.fromMap
-     * 一致，便于双端统一解析.
-     * 选原图时：不压缩，仅当图片 >1000 万像素时做像素缩放到 ≤1000 万，path/sandboxPath 用缩放后路径.
-     * 当 maxWidth>0 且 maxHeight>0 时，图片交付前会缩放到该分辨率以内.
-     * 缩放等耗时操作期间显示 loading.
-     */
-    private fun handleSelectionResult(result: ArrayList<LocalMedia>, maxWidth: Int = 0, maxHeight: Int = 0) {
+        pendingResult = result
+        val args = PickMediaArgs.from(call.arguments as? Map<*, *>)
+
         try {
-            if (result.isEmpty()) {
-                pendingResult?.success(JSONArray().toString())
-                pendingResult = null
-                return
-            }
-
-            val act = activity ?: run {
-                pendingResult?.success(buildResultJson(result, null, null, maxWidth, maxHeight))
-                pendingResult = null
-                return
-            }
-            val ctx = act.applicationContext
-            val cacheDir = ctx.cacheDir
-
-            val loadingDialog = Dialog(act, android.R.style.Theme_Translucent_NoTitleBar).apply {
-                setCancelable(false)
-                val content = FrameLayout(act).apply {
-                    setBackgroundColor(Color.TRANSPARENT)
-                    addView(ProgressBar(act).apply {
-                        layoutParams = FrameLayout.LayoutParams(
-                            FrameLayout.LayoutParams.WRAP_CONTENT,
-                            FrameLayout.LayoutParams.WRAP_CONTENT,
-                            Gravity.CENTER
-                        )
-                    })
-                }
-                setContentView(content)
-            }
-            act.runOnUiThread { loadingDialog.show() }
-
-            Thread {
-                try {
-                    val jsonStr = buildResultJson(result, ctx, cacheDir, maxWidth, maxHeight)
-                    act.runOnUiThread {
-                        try {
-                            loadingDialog.dismiss()
-                        } catch (_: Exception) { }
-                        pendingResult?.success(jsonStr)
-                        pendingResult = null
-                    }
-                } catch (e: Exception) {
-                    act.runOnUiThread {
-                        try {
-                            loadingDialog.dismiss()
-                        } catch (_: Exception) { }
-                        pendingResult?.error("RESULT_ERROR", "Failed to process result: ${e.message}", null)
-                        pendingResult = null
-                    }
-                }
-            }.start()
+            openPicker(args)
         } catch (e: Exception) {
-            pendingResult?.error("RESULT_ERROR", "Failed to process result: ${e.message}", null)
-            pendingResult = null
+            finishWithError("PICK_ERROR", "Failed to open media picker: ${e.message}")
         }
-    }
-
-    private fun buildResultJson(
-        result: ArrayList<LocalMedia>,
-        ctx: Context?,
-        cacheDir: File?,
-        maxWidth: Int,
-        maxHeight: Int
-    ): String {
-        val jsonArray = JSONArray()
-        for (media in result) {
-                val originalPath = media.realPath ?: ""
-                var path = originalPath
-                var sandboxPath = media.sandboxPath ?: path
-                var width = media.width
-                var height = media.height
-                var size = media.size
-                var originalSize = media.size
-                var originalWidth = media.width
-                var originalHeight = media.height
-
-                if (media.isOriginal && (media.mimeType ?: "").startsWith("image/") && ctx != null && cacheDir != null) {
-                    val pixels = width.toLong() * height
-                    if (pixels > SafeImageCompressor.MAX_PIXELS_ORIGINAL) {
-                        val resizedPath = SafeImageCompressor.resizeToMaxPixels(ctx, originalPath, cacheDir, SafeImageCompressor.MAX_PIXELS_ORIGINAL)
-                        if (!resizedPath.isNullOrBlank()) {
-                            path = resizedPath
-                            size = File(resizedPath).length().coerceAtLeast(0)
-                            val scale = kotlin.math.sqrt(SafeImageCompressor.MAX_PIXELS_ORIGINAL.toDouble() / pixels)
-                            width = maxOf(1, (media.width * scale).toInt())
-                            height = maxOf(1, (media.height * scale).toInt())
-                        }
-                    }
-                } else if (!media.isOriginal && (media.mimeType ?: "").startsWith("image/")) {
-                    val hasCompress = !(media.compressPath.isNullOrBlank())
-                    if (hasCompress) {
-                        path = media.compressPath!!
-                        // 交付数据使用压缩后文件的实际大小与尺寸
-                        if (ctx != null) {
-                            val compressedSize = SafeImageCompressor.getSourceSize(ctx, path)
-                            if (compressedSize > 0L && compressedSize != SafeImageCompressor.LARGE_IMAGE_THRESHOLD_BYTES + 1) {
-                                size = compressedSize
-                            }
-                            SafeImageCompressor.getSourceDimensions(ctx, path)?.let { (w, h) ->
-                                width = w
-                                height = h
-                            }
-                        }
-                        if (size == 0L) size = File(path).length().coerceAtLeast(0)
-                        // 原图数据从原图路径读取
-                        if (ctx != null && originalPath.isNotEmpty()) {
-                            val srcSize = SafeImageCompressor.getSourceSize(ctx, originalPath)
-                            if (srcSize > 0L && srcSize != SafeImageCompressor.LARGE_IMAGE_THRESHOLD_BYTES + 1) {
-                                originalSize = srcSize
-                            }
-                            SafeImageCompressor.getSourceDimensions(ctx, originalPath)?.let { (w, h) ->
-                                originalWidth = w
-                                originalHeight = h
-                            }
-                        }
-                    }
-                }
-
-                // 当设置了 maxWidth/maxHeight 且图片超限时，缩放到限制以内（仅图片）
-                if (maxWidth > 0 && maxHeight > 0 && (media.mimeType ?: "").startsWith("image/") && ctx != null && cacheDir != null) {
-                    if (width > maxWidth || height > maxHeight) {
-                        val dimLimitedPath = SafeImageCompressor.resizeToMaxDimensions(ctx, path, cacheDir, maxWidth, maxHeight)
-                        if (!dimLimitedPath.isNullOrBlank()) {
-                            path = dimLimitedPath
-                            sandboxPath = path
-                            size = File(path).length().coerceAtLeast(0)
-                            SafeImageCompressor.getSourceDimensions(ctx, path)?.let { (w, h) ->
-                                width = w
-                                height = h
-                            }
-                        }
-                    }
-                }
-
-                val jsonObject = JSONObject()
-                jsonObject.put("id", media.id)
-                jsonObject.put("originalPath", originalPath)
-                jsonObject.put("originalSize", originalSize)
-                jsonObject.put("originalWidth", originalWidth)
-                jsonObject.put("originalHeight", originalHeight)
-                jsonObject.put("path", path)
-                jsonObject.put("size", size)
-                jsonObject.put("width", width)
-                jsonObject.put("height", height)
-                jsonObject.put("cutPath", media.cutPath ?: "")
-                jsonObject.put("watermarkPath", media.watermarkPath ?: "")
-                jsonObject.put("videoThumbnailPath", media.videoThumbnailPath ?: "")
-                jsonObject.put("duration", media.duration / 1000)
-                jsonObject.put("isChecked", media.isChecked)
-                jsonObject.put("isCut", media.isCut)
-                jsonObject.put("position", media.position)
-                jsonObject.put("num", media.num)
-                jsonObject.put("mimeType", media.mimeType ?: "")
-                jsonObject.put("chooseModel", media.chooseModel)
-                jsonObject.put("isCameraSource", media.isCameraSource)
-                jsonObject.put("compressed", media.isCompressed)
-                jsonObject.put("isOriginal", media.isOriginal)
-                jsonObject.put("fileName", media.fileName ?: "")
-                jsonObject.put("parentFolderName", media.parentFolderName ?: "")
-                jsonObject.put("bucketId", media.bucketId)
-                jsonObject.put("dateAddedTime", media.dateAddedTime)
-                jsonObject.put("customData", media.customData ?: "")
-                jsonObject.put("isMaxSelectEnabledMask", media.isMaxSelectEnabledMask)
-                jsonObject.put("isGalleryEnabledMask", media.isGalleryEnabledMask)
-                jsonObject.put("isEditorImage", media.isEditorImage)
-                jsonArray.put(jsonObject)
-        }
-        return jsonArray.toString()
     }
 
     /**
-     * 取视频首帧作为缩略图，写入 cache 目录并返回本地路径. 若 [videoPath] 为 content:// 则使用 [Context] 重载的 setDataSource，避免
-     * setDataSource(String) 报错. 失败时返回空字符串，由 PictureSelector 使用默认处理.
+     * 打开相册选择器.
+     * 配置 PictureSelector：媒体类型、选择模式、压缩引擎、视频缩略图等.
+     */
+    private fun openPicker(args: PickMediaArgs) {
+        val act = activity!!
+        PictureSelector.create(act)
+            .openGallery(args.mediaType)
+            .setSelectionMode(args.selectionMode)
+            .setImageEngine(GlideEngine.createGlideEngine())
+            .setLanguage(toPictureLanguage(args.language))
+            .setImageSpanCount(args.effectiveGridCount)
+            .setMaxSelectNum(args.maxSelectNum)
+            .setMaxVideoSelectNum(args.maxSelectNum)
+            .isWithSelectVideoImage(args.mimeType == 0)
+            .isOriginalControl(true)
+            .isOriginalSkipCompress(true)
+            .isDisplayCamera(false)
+            .setSelectMaxFileSize(args.effectiveMaxSize)
+            .isPageStrategy(true, 40)
+            .isFilterSizeDuration(true)
+            .isGif(true)
+            .isWebp(true)
+            .isBmp(true)
+            .setVideoThumbnailListener { ctx, videoPath, callback ->
+                callback?.onCallback(videoPath, getVideoThumbnail(ctx!!, videoPath!!))
+            }
+            .setCompressEngine(createCompressEngine())
+            .forResult(createResultListener(args.maxWidth, args.maxHeight))
+    }
+
+    /**
+     * 创建压缩引擎.
+     * - 大图（>10MB）：子线程 SafeImageCompressor 压缩，callback 必须 post 到主线程（否则 PictureSelector 会报 "Can't create handler"）
+     * - 小图：Luban 批量压缩，其 listener 已在主线程回调
+     */
+    private fun createCompressEngine(): CompressFileEngine {
+        return CompressFileEngine { context, source, compressCallback ->
+            val mainHandler = Handler(Looper.getMainLooper())
+            fun uriToPath(uri: Uri): String =
+                if (uri.scheme == "content") uri.toString() else (uri.path ?: uri.toString())
+
+            val smallUris = ArrayList<Uri>()
+            for (uri in source) {
+                val path = uriToPath(uri)
+                val size = SafeImageCompressor.getSourceSize(context, path)
+                if (size > SafeImageCompressor.LARGE_IMAGE_THRESHOLD_BYTES) {
+                    Thread {
+                        try {
+                            val resultPath = SafeImageCompressor.compress(
+                                context, path, context.cacheDir,
+                                SafeImageCompressor.DEFAULT_MAX_SIDE_PX,
+                                SafeImageCompressor.DEFAULT_QUALITY
+                            )
+                            mainHandler.post { compressCallback?.onCallback(path, resultPath) }
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Safe compress failed: ${e.message}")
+                            mainHandler.post { compressCallback?.onCallback(path, null) }
+                        }
+                    }.start()
+                } else {
+                    smallUris.add(uri)
+                }
+            }
+            if (smallUris.isNotEmpty()) {
+                Luban.with(context)
+                    .load(smallUris)
+                    .setTargetDir(context.cacheDir.path)
+                    .setCompressListener(object : OnNewCompressListener {
+                        override fun onStart() {}
+                        override fun onSuccess(src: String?, compressFile: File?) {
+                            compressCallback?.onCallback(src, compressFile?.absolutePath)
+                        }
+                        override fun onError(src: String?, e: Throwable?) {
+                            compressCallback?.onCallback(src, null)
+                        }
+                    })
+                    .launch()
+            }
+        }
+    }
+
+    /**
+     * 创建选择结果回调.
+     * 选择完成：显示 loading，后台构建 JSON，完成后回传；取消：直接返回空数组 "[]".
+     */
+    private fun createResultListener(maxWidth: Int, maxHeight: Int): OnResultCallbackListener<LocalMedia> {
+        return object : OnResultCallbackListener<LocalMedia> {
+            override fun onResult(result: ArrayList<LocalMedia>) {
+                handleSelectionResult(result, maxWidth, maxHeight)
+            }
+            override fun onCancel() {
+                finishWithSuccess(JSONArray().toString())
+            }
+        }
+    }
+
+    /**
+     * 处理选择结果.
+     * 1. 空结果：直接返回 "[]"
+     * 2. 无 Activity：同步构建 JSON 并返回
+     * 3. 有 Activity：显示 loading → 后台线程构建 JSON → 主线程关闭 loading 并回调
+     */
+    private fun handleSelectionResult(result: ArrayList<LocalMedia>, maxWidth: Int, maxHeight: Int) {
+        if (result.isEmpty()) {
+            finishWithSuccess(JSONArray().toString())
+            return
+        }
+        val act = activity
+        if (act == null) {
+            finishWithSuccess(
+                MediaResultMapper.toJsonArray(result, null, null, maxWidth, maxHeight)
+            )
+            return
+        }
+        val ctx = act.applicationContext
+        val cacheDir = ctx.cacheDir
+        val loadingDialog = LoadingHelper.createDialog(act)
+        act.runOnUiThread { loadingDialog.show() }
+
+        Thread {
+            try {
+                val jsonStr = MediaResultMapper.toJsonArray(result, ctx, cacheDir, maxWidth, maxHeight)
+                act.runOnUiThread {
+                    dismissSafely(loadingDialog)
+                    finishWithSuccess(jsonStr)
+                }
+            } catch (e: Exception) {
+                act.runOnUiThread {
+                    dismissSafely(loadingDialog)
+                    finishWithError("RESULT_ERROR", "Failed to process result: ${e.message}")
+                }
+            }
+        }.start()
+    }
+
+    /**
+     * 生成视频首帧缩略图，写入 cache 目录.
+     * content:// 使用 Context.setDataSource 避免 setDataSource(String) 报错.
+     * 失败返回空字符串，PictureSelector 会使用默认处理.
      */
     private fun getVideoThumbnail(context: Context, videoPath: String): String {
         return try {
@@ -407,24 +233,50 @@ class TbchatMediaPickerPlugin : FlutterPlugin, MethodCallHandler, ActivityAware 
             val bitmap = retriever.getFrameAtTime(0, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
             retriever.release()
             if (bitmap != null) {
-                val cacheDir = context.cacheDir
-                val thumbFile = File(cacheDir, "video_thumb_${UUID.randomUUID()}.jpg")
+                val thumbFile = File(context.cacheDir, "video_thumb_${UUID.randomUUID()}.jpg")
                 FileOutputStream(thumbFile).use { out: OutputStream ->
                     bitmap.compress(Bitmap.CompressFormat.JPEG, 85, out)
                 }
                 thumbFile.absolutePath
             } else ""
         } catch (e: Exception) {
-            Log.e("TbchatMediaPickerPlugin", "getVideoThumbnail failed: $e")
+            Log.e(TAG, "getVideoThumbnail failed: $e")
             ""
         }
+    }
+
+    /**
+     * Flutter language 参数映射为 PictureSelector LanguageConfig.
+     * 0=跟随系统，1=简体中文，2=繁体中文，3=英语.
+     */
+    private fun toPictureLanguage(language: Int): Int = when (language) {
+        1 -> LanguageConfig.CHINESE
+        2 -> LanguageConfig.TRADITIONAL_CHINESE
+        3 -> LanguageConfig.ENGLISH
+        else -> LanguageConfig.SYSTEM_LANGUAGE
+    }
+
+    private fun finishWithSuccess(json: String) {
+        pendingResult?.success(json)
+        pendingResult = null
+    }
+
+    private fun finishWithError(code: String, message: String) {
+        pendingResult?.error(code, message, null)
+        pendingResult = null
+    }
+
+    /** 安全关闭 Dialog，忽略异常（如已 dismiss） */
+    private fun dismissSafely(dialog: android.app.Dialog) {
+        try {
+            dialog.dismiss()
+        } catch (_: Exception) {}
     }
 
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         channel.setMethodCallHandler(null)
     }
 
-    /** Activity 绑定后保存引用，用于 present 相册选择器 */
     override fun onAttachedToActivity(binding: ActivityPluginBinding) {
         activity = binding.activity
     }
@@ -439,5 +291,9 @@ class TbchatMediaPickerPlugin : FlutterPlugin, MethodCallHandler, ActivityAware 
 
     override fun onDetachedFromActivity() {
         activity = null
+    }
+
+    companion object {
+        private const val TAG = "TbchatMediaPickerPlugin"
     }
 }
