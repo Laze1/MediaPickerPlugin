@@ -12,7 +12,7 @@ class TbchatMediaPicker {
   /// [gridCount] 选择器每排的显示数量（相册网格列数），默认为4
   /// [maxWidth] 图片最大宽度限制，0 表示不限制；超出时缩放到该值以内
   /// [maxHeight] 图片最大高度限制，0 表示不限制；超出时缩放到该值以内
-  /// [language] 选择器语言（仅 iOS 有效）：0-跟随系统，1-简体中文，2-繁体中文，3-英语
+  /// [language] 选择器语言：0-跟随系统，1-简体中文，2-繁体中文，3-英语
   ///
   /// 返回选择的媒体文件列表，每个文件为 [MediaEntity] 对象
   static Future<List<MediaEntity>> pickMedia({

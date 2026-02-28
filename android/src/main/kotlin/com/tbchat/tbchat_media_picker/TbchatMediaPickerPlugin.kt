@@ -15,6 +15,7 @@ import android.net.Uri
 import android.util.Log
 import com.luck.picture.lib.basic.PictureSelector
 import com.luck.picture.lib.config.SelectMimeType
+import com.luck.picture.lib.language.LanguageConfig
 import com.luck.picture.lib.config.SelectModeConfig
 import com.luck.picture.lib.engine.CompressFileEngine
 import com.luck.picture.lib.entity.LocalMedia
@@ -83,6 +84,7 @@ class TbchatMediaPickerPlugin : FlutterPlugin, MethodCallHandler, ActivityAware 
             val gridCount = args["gridCount"] as? Int ?: 4 // 每排显示数量，默认 4
             val maxWidth = args["maxWidth"] as? Int ?: 0 // 图片最大宽度限制，0=不限制
             val maxHeight = args["maxHeight"] as? Int ?: 0 // 图片最大高度限制，0=不限制
+            val language = args["language"] as? Int ?: 0 // 0=跟随系统，1=简体中文，2=繁体中文，3=英语
 
             try {
                 val mediaType =
@@ -98,11 +100,18 @@ class TbchatMediaPickerPlugin : FlutterPlugin, MethodCallHandler, ActivityAware 
                     maxSize = 1024 * 1024 * 1024L // 0 表示不限制，此处按 1GB 处理
                 }
 
+                // 语言设置：0=跟随系统，1=简体中文，2=繁体中文，3=英语
+                val pictureLanguage = when (language) {
+                    1 -> LanguageConfig.CHINESE
+                    2 -> LanguageConfig.TRADITIONAL_CHINESE
+                    3 -> LanguageConfig.ENGLISH
+                    else -> LanguageConfig.SYSTEM_LANGUAGE
+                }
                 PictureSelector.create(activity!!)
                         .openGallery(mediaType)
                         .setSelectionMode(selectionMode)
                         .setImageEngine(GlideEngine.createGlideEngine())
-                        // .setLanguage() //设置相册语言
+                        .setLanguage(pictureLanguage) //设置相册语言
                         .setImageSpanCount(if (gridCount > 0) gridCount else 4) // 每排显示数量
                         .setMaxSelectNum(maxSelectNum) // 设置图片最大选择数量
                         .setMaxVideoSelectNum(maxSelectNum) // 设置视频最大选择数量
